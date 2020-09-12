@@ -4,5 +4,8 @@ from .linear import (
     LinearVACScan,
     LinearIVACScan,
     projection_distance,
+    projection_distance_coeffs,
     orthonormalize,
+    orthonormalize_coeffs,
+    covmat,
 )

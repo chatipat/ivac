@@ -13,9 +13,9 @@ class LinearVAC:
     def fit(self, trajs):
         if self.addones:
             trajs = _addones(trajs)
-        c0 = _cov(trajs)
+        self.cov = _cov(trajs)
         ct = _cov(trajs, self.lag)
-        evals, evecs = linalg.eigh(_sym(ct), c0)
+        evals, evecs = linalg.eigh(_sym(ct), self.cov)
         self.evals = evals[::-1]
         self.evecs = evecs[:, ::-1]
         self.its = _vac_its(self.evals, self.lag)
@@ -54,10 +54,10 @@ class LinearIVAC:
     def fit(self, trajs):
         if self.addones:
             trajs = _addones(trajs)
-        c0 = _cov(trajs)
+        self.cov = _cov(trajs)
         lags = np.arange(self.minlag, self.maxlag + 1, self.lagstep)
         ic = _icov(trajs, lags, method=self.method)
-        evals, evecs = linalg.eigh(_sym(ic), c0)
+        evals, evecs = linalg.eigh(_sym(ic), self.cov)
         self.evals = evals[::-1]
         self.evecs = evecs[:, ::-1]
         self.its = _ivac_its(
@@ -84,9 +84,9 @@ class LinearVACScan:
     def fit(self, trajs):
         if self.addones:
             trajs = _addones(trajs)
-        c0 = _cov(trajs)
+        self.cov = _cov(trajs)
         nlags = len(self.lags)
-        nfeatures = len(c0)
+        nfeatures = len(self.cov)
         nevecs = self.nevecs
         if nevecs is None:
             nevecs = nfeatures
@@ -98,7 +98,7 @@ class LinearVACScan:
         if self.method == "direct":
             for n, lag in enumerate(self.lags):
                 ct = _cov(trajs, lag)
-                evals, evecs = linalg.eigh(_sym(ct), c0)
+                evals, evecs = linalg.eigh(_sym(ct), self.cov)
                 self.evals[n] = evals[::-1][:nevecs]
                 self.evecs[n] = evecs[:, ::-1][:, :nevecs]
                 self.its[n] = _vac_its(self.evals[n], lag)
@@ -112,7 +112,7 @@ class LinearVACScan:
                     if i == j:
                         cts[:, i, j] *= 0.5
             for n, (ct, lag) in enumerate(zip(cts, self.lags)):
-                evals, evecs = linalg.eigh(_sym(ct), c0)
+                evals, evecs = linalg.eigh(_sym(ct), self.cov)
                 self.evals[n] = evals[::-1][:nevecs]
                 self.evecs[n] = evecs[:, ::-1][:, :nevecs]
                 self.its[n] = _vac_its(self.evals[n], lag)
@@ -122,6 +122,7 @@ class LinearVACScan:
     def __getitem__(self, lag):
         i = np.argwhere(self.lags == lag)[0, 0]
         vac = LinearVAC(lag, nevecs=self.nevecs, addones=self.addones)
+        vac.cov = self.cov
         vac.evals = self.evals[i]
         vac.evecs = self.evecs[i]
         vac.its = self.its[i]
@@ -152,9 +153,9 @@ class LinearIVACScan:
     def fit(self, trajs):
         if self.addones:
             trajs = _addones(trajs)
-        c0 = _cov(trajs)
+        self.cov = _cov(trajs)
         nlags = len(self.lags)
-        nfeatures = len(c0)
+        nfeatures = len(self.cov)
         nevecs = self.nevecs
         if nevecs is None:
             nevecs = nfeatures
@@ -193,7 +194,7 @@ class LinearIVACScan:
 
         for i in range(nlags):
             ic = _cov(trajs, self.lags[i])
-            evals, evecs = linalg.eigh(_sym(ic), c0)
+            evals, evecs = linalg.eigh(_sym(ic), self.cov)
             self.evals[i, i] = evals[::-1][:nevecs]
             self.evecs[i, i] = evecs[:, ::-1][:, :nevecs]
             self.its[i, i] = _ivac_its(
@@ -201,7 +202,7 @@ class LinearIVACScan:
             )
             for j in range(i + 1, nlags):
                 ic += ics[j - 1]
-                evals, evecs = linalg.eigh(_sym(ic), c0)
+                evals, evecs = linalg.eigh(_sym(ic), self.cov)
                 self.evals[i, j] = evals[::-1][:nevecs]
                 self.evecs[i, j] = evecs[:, ::-1][:, :nevecs]
                 self.its[i, j] = _ivac_its(
@@ -220,6 +221,7 @@ class LinearIVACScan:
             addones=self.addones,
             method=self.method,
         )
+        ivac.cov = self.cov
         ivac.evals = self.evals[i, j]
         ivac.evecs = self.evecs[i, j]
         ivac.its = self.its[i, j]
@@ -236,6 +238,19 @@ def projection_distance(u, v, weights=None, ortho=False):
     return np.sqrt(len(cov) - np.sum(s ** 2))
 
 
+def projection_distance_coeffs(u, v, cov=None, ortho=False):
+    if ortho:
+        u = orthonormalize_coeffs(u, cov)
+        v = orthonormalize_coeffs(v, cov)
+    if cov is None:
+        cov = u.T @ v
+    else:
+        cov = u.T @ cov @ v
+    s = linalg.svdvals(cov)
+    s = np.clip(s, 0.0, 1.0)
+    return np.sqrt(len(cov) - np.sum(s ** 2))
+
+
 def orthonormalize(features, weights=None):
     cov = _cov2(features, weights=weights)
     if np.allclose(cov, np.identity(len(cov))):
@@ -247,6 +262,22 @@ def orthonormalize(features, weights=None):
         x = np.asarray(x, dtype=np.float64)
         result.append(x @ uinv)
     return result
+
+
+def orthonormalize_coeffs(coeffs, cov=None):
+    if cov is None:
+        cov = coeffs.T @ coeffs
+    else:
+        cov = coeffs.T @ cov @ coeffs
+    if np.allclose(cov, np.identity(len(cov))):
+        return coeffs
+    u = linalg.cholesky(cov)
+    uinv = linalg.inv(u)
+    return coeffs @ uinv
+
+
+def covmat(u, v=None, weights=None):
+    return _cov2(u, v, weights=weights)
 
 
 def _vac_its(evals, lag):
