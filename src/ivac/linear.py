@@ -74,6 +74,158 @@ class LinearIVAC:
         return result
 
 
+class LinearVACScan:
+    def __init__(self, lags, nevecs=None, addones=False, method="direct"):
+        self.lags = lags
+        self.nevecs = nevecs
+        self.addones = addones
+        self.method = method
+
+    def fit(self, trajs):
+        if self.addones:
+            trajs = _addones(trajs)
+        c0 = _cov(trajs)
+        nlags = len(self.lags)
+        nfeatures = len(c0)
+        nevecs = self.nevecs
+        if nevecs is None:
+            nevecs = nfeatures
+
+        self.evals = np.empty((nlags, nevecs))
+        self.evecs = np.empty((nlags, nfeatures, nevecs))
+        self.its = np.empty((nlags, nevecs))
+
+        if self.method == "direct":
+            for n, lag in enumerate(self.lags):
+                ct = _cov(trajs, lag)
+                evals, evecs = linalg.eigh(_sym(ct), c0)
+                self.evals[n] = evals[::-1][:nevecs]
+                self.evecs[n] = evecs[:, ::-1][:, :nevecs]
+                self.its[n] = _vac_its(self.evals[n], lag)
+        elif self.method == "fft":
+            cts = np.zeros((nlags, nfeatures, nfeatures))
+            for i in range(nfeatures):
+                for j in range(i, nfeatures):
+                    corr1, corr2 = _fftcorr(trajs, self.lags, i, j)
+                    cts[:, i, j] += corr1
+                    cts[:, j, i] += corr2
+                    if i == j:
+                        cts[:, i, j] *= 0.5
+            for n, (ct, lag) in enumerate(zip(cts, self.lags)):
+                evals, evecs = linalg.eigh(_sym(ct), c0)
+                self.evals[n] = evals[::-1][:nevecs]
+                self.evecs[n] = evecs[:, ::-1][:, :nevecs]
+                self.its[n] = _vac_its(self.evals[n], lag)
+        else:
+            raise ValueError("method must be 'direct' or 'fft'")
+
+    def __getitem__(self, lag):
+        i = np.argwhere(self.lags == lag)[0, 0]
+        vac = LinearVAC(lag, nevecs=self.nevecs, addones=self.addones)
+        vac.evals = self.evals[i]
+        vac.evecs = self.evecs[i]
+        vac.its = self.its[i]
+        return vac
+
+
+class LinearIVACScan:
+    def __init__(
+        self,
+        lags,
+        lagstep=1,
+        nevecs=None,
+        addones=False,
+        method="direct",
+    ):
+        if np.any(lags[1:] < lags[:-1]):
+            raise ValueError("lags must be nondecreasing")
+        if np.any((lags[1:] - lags[:-1]) % lagstep != 0):
+            raise ValueError(
+                "lags time intervals must be multiples of lagstep"
+            )
+        self.lags = lags
+        self.lagstep = lagstep
+        self.nevecs = nevecs
+        self.addones = addones
+        self.method = method
+
+    def fit(self, trajs):
+        if self.addones:
+            trajs = _addones(trajs)
+        c0 = _cov(trajs)
+        nlags = len(self.lags)
+        nfeatures = len(c0)
+        nevecs = self.nevecs
+        if nevecs is None:
+            nevecs = nfeatures
+
+        self.evals = np.full((nlags, nlags, nevecs), np.nan)
+        self.evecs = np.full((nlags, nlags, nfeatures, nevecs), np.nan)
+        self.its = np.full((nlags, nlags, nevecs), np.nan)
+
+        ics = np.zeros((nlags - 1, nfeatures, nfeatures))
+        if self.method == "direct":
+            for n in range(nlags - 1):
+                lags = np.arange(
+                    self.lags[n] + self.lagstep,
+                    self.lags[n + 1] + 1,
+                    self.lagstep,
+                )
+                ics[n] = _icov(trajs, lags)
+        elif self.method == "fft":
+            lags = np.arange(
+                self.lags[0] + self.lagstep,
+                self.lags[-1] + 1,
+                self.lagstep,
+            )
+            for i in range(nfeatures):
+                for j in range(i, nfeatures):
+                    corr1, corr2 = _fftcorr(trajs, lags, i, j)
+                    for n in range(nlags - 1):
+                        start = (self.lags[n] - self.lags[0]) // self.lagstep
+                        end = (self.lags[n + 1] - self.lags[0]) // self.lagstep
+                        ics[n, i, j] += np.sum(corr1[start:end])
+                        ics[n, j, i] += np.sum(corr2[start:end])
+                        if i == j:
+                            ics[n, i, j] *= 0.5
+        else:
+            raise ValueError("method must be 'direct' or 'fft'")
+
+        for i in range(nlags):
+            ic = _cov(trajs, self.lags[i])
+            evals, evecs = linalg.eigh(_sym(ic), c0)
+            self.evals[i, i] = evals[::-1][:nevecs]
+            self.evecs[i, i] = evecs[:, ::-1][:, :nevecs]
+            self.its[i, i] = _ivac_its(
+                self.evals[i, i], self.lags[i], self.lags[i], self.lagstep
+            )
+            for j in range(i + 1, nlags):
+                ic += ics[j - 1]
+                evals, evecs = linalg.eigh(_sym(ic), c0)
+                self.evals[i, j] = evals[::-1][:nevecs]
+                self.evecs[i, j] = evecs[:, ::-1][:, :nevecs]
+                self.its[i, j] = _ivac_its(
+                    self.evals[i, j], self.lags[i], self.lags[j], self.lagstep
+                )
+
+    def __getitem__(self, lags):
+        minlag, maxlag = lags
+        i = np.argwhere(self.lags == minlag)[0, 0]
+        j = np.argwhere(self.lags == maxlag)[0, 0]
+        ivac = LinearIVAC(
+            self.lags[i],
+            self.lags[j],
+            lagstep=self.lagstep,
+            nevecs=self.nevecs,
+            addones=self.addones,
+            method=self.method,
+        )
+        ivac.evals = self.evals[i, j]
+        ivac.evecs = self.evecs[i, j]
+        ivac.its = self.its[i, j]
+        return ivac
+
+
 def projection_distance(u, v, weights=None, ortho=False):
     if ortho:
         u = orthonormalize(u)

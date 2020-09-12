@@ -1,1 +1,8 @@
-from .linear import LinearVAC, LinearIVAC, projection_distance, orthonormalize
+from .linear import (
+    LinearVAC,
+    LinearIVAC,
+    LinearVACScan,
+    LinearIVACScan,
+    projection_distance,
+    orthonormalize,
+)
