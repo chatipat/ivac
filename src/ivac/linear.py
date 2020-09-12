@@ -1,7 +1,7 @@
 import numpy as np
 import numba as nb
 import warnings
-from scipy import linalg, optimize
+from scipy import linalg, optimize, signal
 
 
 class LinearVAC:
@@ -31,7 +31,15 @@ class LinearVAC:
 
 
 class LinearIVAC:
-    def __init__(self, minlag, maxlag, lagstep=1, nevecs=None, addones=False):
+    def __init__(
+        self,
+        minlag,
+        maxlag,
+        lagstep=1,
+        nevecs=None,
+        addones=False,
+        method="direct",
+    ):
         if minlag > maxlag:
             raise ValueError("minlag must be less than or equal to maxlag")
         if (maxlag - minlag) % lagstep != 0:
@@ -41,14 +49,14 @@ class LinearIVAC:
         self.lagstep = lagstep
         self.nevecs = nevecs
         self.addones = addones
+        self.method = method
 
     def fit(self, trajs):
         if self.addones:
             trajs = _addones(trajs)
         c0 = _cov(trajs)
-        ic = np.zeros_like(c0)
-        for lag in range(self.minlag, self.maxlag + 1, self.lagstep):
-            ic += _cov(trajs, lag)
+        lags = np.arange(self.minlag, self.maxlag + 1, self.lagstep)
+        ic = _icov(trajs, lags, method=self.method)
         evals, evecs = linalg.eigh(_sym(ic), c0)
         self.evals = evals[::-1]
         self.evecs = evecs[:, ::-1]
@@ -154,6 +162,37 @@ def _cov(trajs, lag=0):
         cov += x.T @ y
         count += len(x)
     return cov / count
+
+
+def _icov(trajs, lags, method="direct"):
+    nfeatures = np.shape(trajs[0])[-1]
+    ic = np.zeros((nfeatures, nfeatures))
+    if method == "direct":
+        for lag in lags:
+            ic += _cov(trajs, lag)
+    elif method == "fft":
+        for i in range(nfeatures):
+            for j in range(i, nfeatures):
+                corr1, corr2 = _fftcorr(trajs, lags, i, j)
+                ic[i, j] += np.sum(corr1)
+                ic[j, i] += np.sum(corr2)
+                if i == j:
+                    ic[i, j] *= 0.5
+    else:
+        raise ValueError("method must be 'direct' or 'fft'")
+    return ic
+
+
+def _fftcorr(trajs, lags, i, j):
+    corr1 = np.zeros(len(lags))
+    corr2 = np.zeros(len(lags))
+    count = np.zeros(len(lags))
+    for traj in trajs:
+        corr = signal.correlate(traj[:, i], traj[:, j], method="fft")
+        corr1 += corr[len(traj) - 1 - lags]
+        corr2 += corr[len(traj) - 1 + lags]
+        count += len(traj) - lags
+    return corr1 / count, corr2 / count
 
 
 def _sym(mat):
