@@ -66,6 +66,29 @@ class LinearIVAC:
         return result
 
 
+def projection_distance(u, v, weights=None, ortho=False):
+    if ortho:
+        u = orthonormalize(u)
+        v = orthonormalize(v)
+    cov = _cov2(u, v, weights=weights)
+    s = linalg.svdvals(cov)
+    s = np.clip(s, 0.0, 1.0)
+    return np.sqrt(len(cov) - np.sum(s ** 2))
+
+
+def orthonormalize(features, weights=None):
+    cov = _cov2(features, weights=weights)
+    if np.allclose(cov, np.identity(len(cov))):
+        return features
+    u = linalg.cholesky(cov)
+    uinv = linalg.inv(u)
+    result = []
+    for x in features:
+        x = np.asarray(x, dtype=np.float64)
+        result.append(x @ uinv)
+    return result
+
+
 def _vac_its(evals, lag):
     its = np.full(len(evals), np.nan)
     its[evals >= 1.0] = np.inf
@@ -135,3 +158,28 @@ def _cov(trajs, lag=0):
 
 def _sym(mat):
     return 0.5 * (mat + mat.T)
+
+
+def _cov2(u, v=None, weights=None):
+    if v is None:
+        v = u
+    if len(u) != len(v):
+        raise ValueError("mismatch in the number of trajectories")
+    cov = np.zeros((np.shape(u[0])[-1], np.shape(v[0])[-1]))
+    count = 0.0
+    if weights is None:
+        for x, y in zip(u, v):
+            x = np.asarray(x, dtype=np.float64)
+            y = np.asarray(y, dtype=np.float64)
+            cov += x.T @ y
+            count += len(x)
+    else:
+        if len(u) != len(weights):
+            raise ValueError("mismatch in the number of trajectories")
+        for x, y, w in zip(u, v, weights):
+            x = np.asarray(x, dtype=np.float64)
+            y = np.asarray(y, dtype=np.float64)
+            w = np.asarray(w, dtype=np.float64)
+            cov += np.einsum("n,ni,nj->ij", w, x, y)
+            count += np.sum(w)
+    return cov / count
