@@ -1,1 +1,1 @@
-from .linear import LinearVAC
+from .linear import LinearVAC, LinearIVAC

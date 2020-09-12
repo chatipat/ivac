@@ -1,5 +1,7 @@
 import numpy as np
-from scipy import linalg
+import numba as nb
+import warnings
+from scipy import linalg, optimize
 
 
 class LinearVAC:
@@ -28,12 +30,86 @@ class LinearVAC:
         return result
 
 
+class LinearIVAC:
+    def __init__(self, minlag, maxlag, lagstep=1, nevecs=None, addones=False):
+        if minlag > maxlag:
+            raise ValueError("minlag must be less than or equal to maxlag")
+        if (maxlag - minlag) % lagstep != 0:
+            raise ValueError("lag time interval must be a multiple of lagstep")
+        self.minlag = minlag
+        self.maxlag = maxlag
+        self.lagstep = lagstep
+        self.nevecs = nevecs
+        self.addones = addones
+
+    def fit(self, trajs):
+        if self.addones:
+            trajs = _addones(trajs)
+        c0 = _cov(trajs)
+        ic = np.zeros_like(c0)
+        for lag in range(self.minlag, self.maxlag + 1, self.lagstep):
+            ic += _cov(trajs, lag)
+        evals, evecs = linalg.eigh(_sym(ic), c0)
+        self.evals = evals[::-1]
+        self.evecs = evecs[:, ::-1]
+        self.its = _ivac_its(
+            self.evals, self.minlag, self.maxlag, self.lagstep
+        )
+
+    def transform(self, trajs):
+        if self.addones:
+            trajs = _addones(trajs)
+        result = []
+        for traj in trajs:
+            traj = np.asarray(traj, dtype=np.float64)
+            result.append(traj @ self.evecs[:, : self.nevecs])
+        return result
+
+
 def _vac_its(evals, lag):
     its = np.full(len(evals), np.nan)
     its[evals >= 1.0] = np.inf
     mask = np.logical_and(0.0 < evals, evals < 1.0)
     its[mask] = -lag / np.log(evals[mask])
     return its
+
+
+def _ivac_its(evals, minlag, maxlag, lagstep=1):
+    its = np.full(len(evals), np.nan)
+    for i, val in enumerate(evals):
+        dlag = maxlag - minlag + lagstep
+        avg = val * lagstep / dlag
+        if avg >= 1.0:
+            its[i] = np.inf
+        elif avg > 0.0:
+            guess = -2.0 * np.log(avg) / (minlag + maxlag)
+            sol = optimize.root_scalar(
+                _ivac_its_f_p,
+                args=(val, minlag, dlag, lagstep),
+                method="newton",
+                x0=guess,
+                fprime=True,
+            )
+            if sol.converged:
+                its[i] = 1.0 / sol.root
+            else:
+                warnings.warn("implied timescale calculation did not converge")
+    return its
+
+
+@nb.njit
+def _ivac_its_f_p(sigma, val, minlag, dlag, lagstep=1):
+    a = (
+        np.exp(-sigma * minlag)
+        * np.expm1(-sigma * dlag)
+        / np.expm1(-sigma * lagstep)
+    )
+    b = (
+        minlag
+        + lagstep / np.expm1(sigma * lagstep)
+        - dlag / np.expm1(sigma * dlag)
+    )
+    return a - val, -a * b
 
 
 def _addones(trajs):
