@@ -10,4 +10,4 @@ from .linear import (
     covmat,
 )
 
-from .nonlinear import TimeLaggedPairSampler
+from .nonlinear import TimeLaggedPairSampler, VAMPScore
