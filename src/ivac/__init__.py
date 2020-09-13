@@ -11,6 +11,7 @@ from .linear import (
 )
 
 from .nonlinear import (
+    NonlinearIVAC,
     NonlinearBasis,
     TimeLaggedPairSampler,
     TimeLaggedPairDataset,

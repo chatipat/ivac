@@ -1,5 +1,133 @@
+import numpy as np
 import torch
 import pytorch_lightning as pl
+from .linear import LinearVAC, LinearIVAC
+
+
+class NonlinearIVAC:
+    def __init__(
+        self,
+        minlag,
+        maxlag=None,
+        nevecs=None,
+        batch_size=None,
+        val_batch_size=None,
+        val_every=1,
+        hidden_widths=[],
+        activation=torch.nn.Tanh,
+        batchnorm=False,
+        standardize=False,
+        score="VAMP1",
+        lr=0.001,
+        patience=None,
+        maxiter=None,
+        dtype=torch.float,
+        device="cpu",
+        linear_method="direct",
+    ):
+        if nevecs is None:
+            raise ValueError("nevecs must be specified")
+        if batch_size is None:
+            raise ValueError("batch_size must be specified")
+        if val_batch_size is None:
+            val_batch_size = batch_size
+        if maxiter is None:
+            raise ValueError("maxiter must be specified")
+
+        self.minlag = minlag
+        self.maxlag = maxlag
+        self.nevecs = nevecs
+        self.batch_size = batch_size
+        self.val_batch_size = val_batch_size
+        self.val_every = val_every
+        self.hidden_widths = hidden_widths
+        self.activation = activation
+        self.batchnorm = batchnorm
+        self.standardize = standardize
+        self.score = score
+        self.lr = lr
+        self.patience = patience
+        self.maxiter = maxiter
+        self.dtype = dtype
+        self.device = device
+
+        if maxlag is None:
+            self.linear = LinearVAC(minlag, addones=True)
+        else:
+            self.linear = LinearIVAC(
+                minlag, maxlag, addones=True, method=linear_method
+            )
+
+    def _make_dataloader(self, trajs, batch_size):
+        dataset = TimeLaggedPairDataset(
+            trajs,
+            batch_size,
+            self.minlag,
+            self.maxlag,
+            dtype=self.dtype,
+            device=self.device,
+        )
+        return torch.utils.data.DataLoader(dataset, batch_size=None)
+
+    def fit(self, train_trajs, val_trajs=None, save_dir=None):
+        if val_trajs is None:
+            val_trajs = train_trajs
+        train_dataloader = self._make_dataloader(train_trajs, self.batch_size)
+        val_dataloader = self._make_dataloader(val_trajs, self.val_batch_size)
+
+        self.basis = NonlinearBasis(
+            nfeatures=np.shape(train_trajs[0])[-1],
+            nbasis=self.nevecs - 1,
+            hidden_widths=self.hidden_widths,
+            activation=self.activation,
+            batchnorm=self.batchnorm,
+            standardize=self.standardize,
+            score=self.score,
+            lr=self.lr,
+        )
+
+        if self.patience is None:
+            early_stop_callback = False
+        else:
+            early_stop_callback = pl.callbacks.EarlyStopping(
+                patience=self.patience, mode="min"
+            )
+
+        if self.device == "cpu":
+            gpus = 0
+        elif self.device == "cuda":
+            gpus = 1
+        else:
+            _, gpu_id = self.device.split(":")
+            gpus = [int(gpu_id)]
+        precision = {torch.float16: 16, torch.float32: 32, torch.float64: 64}
+
+        trainer = pl.Trainer(
+            val_check_interval=1,
+            check_val_every_n_epoch=self.val_every,
+            default_root_dir=save_dir,
+            early_stop_callback=early_stop_callback,
+            gpus=gpus,
+            limit_train_batches=1,
+            limit_val_batches=1,
+            max_epochs=self.maxiter,
+            precision=precision[self.dtype],
+        )
+        trainer.fit(self.basis, train_dataloader, val_dataloader)
+
+        self.linear.fit(self.transform_basis(train_trajs))
+        self.evals = self.linear.evals
+        self.its = self.linear.its
+
+    def transform(self, trajs):
+        return self.linear.transform(self.transform_basis(trajs))
+
+    def transform_basis(self, trajs):
+        features = []
+        for traj in trajs:
+            traj = torch.as_tensor(traj, dtype=self.dtype, device=self.device)
+            features.append(self.basis(traj).detach().cpu().numpy())
+        return features
 
 
 class NonlinearBasis(pl.LightningModule):
