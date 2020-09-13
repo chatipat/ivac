@@ -9,3 +9,5 @@ from .linear import (
     orthonormalize_coeffs,
     covmat,
 )
+
+from .nonlinear import TimeLaggedPairSampler
