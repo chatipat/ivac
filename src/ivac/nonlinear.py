@@ -1,4 +1,89 @@
 import torch
+import pytorch_lightning as pl
+
+
+class NonlinearBasis(pl.LightningModule):
+    def __init__(
+        self,
+        nfeatures,
+        nbasis,
+        hidden_widths=[],
+        activation=torch.nn.Tanh,
+        batchnorm=False,
+        standardize=False,
+        score="VAMP1",
+        lr=0.001,
+    ):
+        super().__init__()
+
+        layers = []
+        last_features = nfeatures
+        for hidden_features in hidden_widths:
+            layers.append(torch.nn.Linear(last_features, hidden_features))
+            if batchnorm:
+                layers.append(torch.nn.BatchNorm1d(hidden_features))
+            layers.append(activation())
+            last_features = hidden_features
+        layers.append(torch.nn.Linear(last_features, nbasis))
+        if standardize:
+            layers.append(torch.nn.BatchNorm1d(nbasis, affine=False))
+        self.model = torch.nn.Sequential(*layers)
+
+        if score == "VAMP1":
+            self.score = VAMPScore(score=1, addones=True)
+        elif score == "VAMP2":
+            self.score = VAMPScore(score=2, addones=True)
+        else:
+            raise ValueError("score must be 'VAMP1' or 'VAMP2'")
+
+        self.lr = lr
+
+    def forward(self, x):
+        return self.model(x)
+
+    def configure_optimizers(self):
+        return torch.optim.AdamW(self.parameters(), lr=self.lr)
+
+    def training_step(self, batch, batch_idx):
+        x, y = batch
+        xy = torch.cat([x, y])
+        xy = self(xy)
+        x, y = xy[: len(x)], xy[len(x) :]
+        loss = -self.score(x, y)
+        result = pl.TrainResult(minimize=loss)
+        result.log("train_loss", loss)
+        return result
+
+    def validation_step(self, batch, batch_idx):
+        x, y = batch
+        xy = torch.cat([x, y])
+        xy = self(xy)
+        x, y = xy[: len(x)], xy[len(x) :]
+        loss = -self.score(x, y)
+        result = pl.EvalResult(checkpoint_on=loss, early_stop_on=loss)
+        result.log("val_loss", loss)
+        return result
+
+
+class TimeLaggedPairDataset(torch.utils.data.IterableDataset):
+    def __init__(
+        self,
+        trajs,
+        num,
+        minlag,
+        maxlag=None,
+        dtype=torch.float32,
+        device="cpu",
+    ):
+        super().__init__()
+        self.sampler = TimeLaggedPairSampler(trajs, dtype=dtype, device=device)
+        self.num = num
+        self.minlag = minlag
+        self.maxlag = maxlag
+
+    def __iter__(self):
+        while True:
+            yield self.sampler(self.num, self.minlag, self.maxlag)
 
 
 class TimeLaggedPairSampler:

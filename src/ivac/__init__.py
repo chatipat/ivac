@@ -10,4 +10,9 @@ from .linear import (
     covmat,
 )
 
-from .nonlinear import TimeLaggedPairSampler, VAMPScore
+from .nonlinear import (
+    NonlinearBasis,
+    TimeLaggedPairSampler,
+    TimeLaggedPairDataset,
+    VAMPScore,
+)
