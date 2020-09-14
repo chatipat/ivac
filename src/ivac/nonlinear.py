@@ -5,6 +5,54 @@ from .linear import LinearVAC, LinearIVAC
 
 
 class NonlinearIVAC:
+    """Solve nonlinear IVAC using a neural network basis.
+
+    Parameters
+    ----------
+    minlag : int
+        Minimum IVAC lag time in units of frames.
+    maxlag : int, optional
+        Maximum IVAC lag time (inclusive) in units of frames.
+        If None, this is set to minlag.
+    nevecs : int
+        Number of eigenvectors (including the trivial eigenvector)
+        to find.
+    batch_size : int
+        Number of samples to draw at each training iteration.
+    val_batch_size : int, optional
+        Number of samples to draw at each validation iteration.
+    val_every : int, optional
+        Number of training iterations between validation iterations.
+    hidden_widths : list of int, optional
+        Number of hidden features at each hidden layer.
+        The length of this list is the number of hidden layers.
+    activation : torch.nn.Module, optional
+        Activation function to use in the neural network.
+    batchnorm : bool, optional
+        If True, use batch normalization in the neural network.
+    standardize : bool, optional
+        If True, remove the mean of the output
+        and set its standard deviation to 1.
+    score : str, optional
+        Score function to maximize.
+        This can currently be 'VAMP1' or 'VAMP2'.
+    lr : float, optional
+        Learning rate for optimization.
+    patience : int, optional
+        Patience parameter for early stopping.
+    maxiter : int, optional
+        Maximum number of optimization iterations to perform.
+    dtype : torch.dtype, optional
+        Data type to use for the neural network.
+    device : torch.device, optional
+        Device to use to optimize the neural network.
+    linear_method : str, optional
+        Method to use for solving linear IVAC
+        using the optimized neural network basis set.
+        Currently, 'direct' and 'fft' are supported.
+
+    """
+
     def __init__(
         self,
         minlag,
@@ -59,6 +107,7 @@ class NonlinearIVAC:
             )
 
     def _make_dataloader(self, trajs, batch_size):
+        """Prepare the data for training."""
         dataset = TimeLaggedPairDataset(
             trajs,
             batch_size,
@@ -70,6 +119,22 @@ class NonlinearIVAC:
         return torch.utils.data.DataLoader(dataset, batch_size=None)
 
     def fit(self, train_trajs, val_trajs=None, save_dir=None):
+        """Train the neural network using the input trajectories.
+
+        Parameters
+        ----------
+        train_trajs : list of (n_frames[i], n_features)
+            Featurized trajectories for the training dataset.
+        val_trajs : list of (n_frames[j], n_features), optional
+            Featurized trajectories for the validation dataset.
+            These do not need to have the same number of frames
+            as the training trajectories.
+            If None, use the training data for validation.
+        save_dir : str, optional
+            Directory for saving training output.
+            Uses the current directory by default.
+
+        """
         if val_trajs is None:
             val_trajs = train_trajs
         train_dataloader = self._make_dataloader(train_trajs, self.batch_size)
@@ -120,9 +185,35 @@ class NonlinearIVAC:
         self.its = self.linear.its
 
     def transform(self, trajs):
+        """Compute IVAC eigenvectors at each frame of the trajectories.
+
+        Parameters
+        ----------
+        trajs : list of (n_frames[i], n_features) array-like
+            List of featurized trajectories.
+
+        Returns
+        -------
+        list of (n_frames[i], n_evecs) ndarray
+            IVAC eigenvectors at each frame of the trajectories.
+
+        """
         return self.linear.transform(self.transform_basis(trajs))
 
     def transform_basis(self, trajs):
+        """Apply the nonlinear combinations to the input features.
+
+        Parameters
+        ----------
+        trajs : list of (n_frames[i], n_features) array-like
+            List of featurized trajectories.
+
+        Returns
+        -------
+        list of (n_frames[i], n_evecs - 1) ndarray
+            Nonlinear combinations of input features.
+
+        """
         features = []
         for traj in trajs:
             traj = torch.as_tensor(traj, dtype=self.dtype, device=self.device)
@@ -131,6 +222,32 @@ class NonlinearIVAC:
 
 
 class NonlinearBasis(pl.LightningModule):
+    """Neural network for taking nonlinear combinations of features.
+
+    This is meant to be used with a PyTorch Lightning Trainer.
+
+    Parameters
+    ----------
+    nfeatures : int
+        Number of input features.
+    hidden_widths : list of int, optional
+        Number of hidden features at each hidden layer.
+        The length of this list is the number of hidden layers.
+    activation : torch.nn.Module, optional
+        Activation function to use in the neural network.
+    batchnorm : bool, optional
+        If True, use batch normalization in the neural network.
+    standardize : bool, optional
+        If True, remove the mean of the output
+        and set its standard deviation to 1.
+    score : str, optional
+        Score function to maximize.
+        This can currently be 'VAMP1' or 'VAMP2'.
+    lr : float, optional
+        Learning rate for optimization.
+
+    """
+
     def __init__(
         self,
         nfeatures,
@@ -167,12 +284,15 @@ class NonlinearBasis(pl.LightningModule):
         self.lr = lr
 
     def forward(self, x):
+        """Apply the nonlinear combinations to input features."""
         return self.model(x)
 
     def configure_optimizers(self):
+        """Configure the optimizer for training."""
         return torch.optim.AdamW(self.parameters(), lr=self.lr)
 
     def training_step(self, batch, batch_idx):
+        """Compute the training loss."""
         x, y = batch
         xy = torch.cat([x, y])
         xy = self(xy)
@@ -183,6 +303,7 @@ class NonlinearBasis(pl.LightningModule):
         return result
 
     def validation_step(self, batch, batch_idx):
+        """Compute the validation loss."""
         x, y = batch
         xy = torch.cat([x, y])
         xy = self(xy)
@@ -194,6 +315,31 @@ class NonlinearBasis(pl.LightningModule):
 
 
 class TimeLaggedPairDataset(torch.utils.data.IterableDataset):
+    r"""Dataset yielding time lagged pairs from trajectories.
+
+    For a single trajectory :math:`x_0, x_1, \ldots, x_{T-1}`,
+    this class samples pairs :math:`(x_t, x_{t+\tau})`.
+    For each pair, :math:`\tau` is uniformly drawn from the set
+    {minlag, minlag + 1, ..., maxlag}.
+
+    Parameters
+    ----------
+    trajs : list of (n_frames[i], n_features) array-like
+        List of featurized trajectories.
+    num : int
+        Number of pairs to sample and return at each iteration.
+    minlag : int
+        Minimum lag time in units of frames.
+    maxlag : int, optional
+        Maximum lag time in units of frames.
+        If None, this is set to the minimum lag time.
+    dtype : torch.dtype
+        Data type of output tensor.
+    device : torch.device
+        Device of output tensor.
+
+    """
+
     def __init__(
         self,
         trajs,
@@ -210,11 +356,44 @@ class TimeLaggedPairDataset(torch.utils.data.IterableDataset):
         self.maxlag = maxlag
 
     def __iter__(self):
+        """Yields batches of sampled time lagged pairs indefinitely.
+
+        Yields
+        -------
+        x, y : (n_samples, n_features) torch.Tensor
+            Time lagged pairs.
+
+        """
         while True:
             yield self.sampler(self.num, self.minlag, self.maxlag)
 
 
 class TimeLaggedPairSampler:
+    r"""Sample time lagged pairs from trajectories.
+
+    For a single trajectory :math:`x_0, x_1, \ldots, x_{T-1}`,
+    this class samples pairs :math:`(x_t, x_{t+\tau})`.
+    For each pair, :math:`\tau` is uniformly drawn from the set
+    {minlag, minlag + 1, ..., maxlag}.
+
+    To draw n_samples pairs from trajectories trajs:
+
+    .. code-block::
+
+        sampler = TimeLaggedPairSampler(trajs)
+        x, y = sampler(n_samples, minlag, maxlag)
+
+    Parameters
+    ----------
+    trajs : list of (n_frames[i], n_features) array-like
+        List of featurized trajectories.
+    dtype : torch.dtype
+        Data type of output tensor.
+    device : torch.device
+        Device of output tensor.
+
+    """
+
     def __init__(
         self,
         trajs,
@@ -239,6 +418,24 @@ class TimeLaggedPairSampler:
         self.lengths = len(features) - self.offsets
 
     def __call__(self, num, minlag, maxlag=None):
+        """Sample time lagged pairs from trajectories.
+
+        Parameters
+        ----------
+        num : int
+            Number of pairs to sample.
+        minlag : int
+            Minimum lag time in units of frames.
+        maxlag : int, optional
+            Maximum lag time in units of frames.
+            If None, this is set to the minimum lag time.
+
+        Returns
+        -------
+        x, y : (n_samples, n_features) torch.Tensor
+            Time lagged pairs.
+
+        """
         if maxlag is None:
             maxlag = minlag
         lags = torch.randint(minlag, maxlag + 1, (num,), device=self.device)
@@ -251,6 +448,44 @@ class TimeLaggedPairSampler:
 
 
 class VAMPScore:
+    r"""Compute reversible VAMP scores.
+
+    The VAMP-:math:`k` score is defined as
+
+    .. math::
+
+        \sum_i \lvert \lambda_i \rvert^k
+
+    where :math:`\lambda_i` are the eigenvalues of the estimated
+    (integrated) transition operator.
+
+    This class assumes that dynamics are reversible and that the
+    constant feature is contained within the feature space.
+    If the constant feature is not within the feature space,
+    center=True or addones=True (or both) should be set.
+    This class can be used as
+
+    .. code-block::
+
+        score_fn = VAMPScore(score=1, addones=True)
+        score = score_fn(x, y)
+
+    Parameters
+    ----------
+    score : int, optional
+        VAMP score to compute. Currently, only 1 and 2 are supported.
+    center : bool, optional
+        If True, remove the mean from each feature before calculating
+        the VAMP score, and adjust the resulting score appropriately.
+    addones : bool, optional
+        If True, adds a feature of all ones before computing the
+        VAMP score.
+    minlag, maxlag, lagstep : int, optional
+        IVAC parameters. If specified, scales the VAMP score to conform
+        with the integrated (rather than averaged) covariance matrix.
+
+    """
+
     def __init__(
         self,
         score=1,
@@ -278,6 +513,19 @@ class VAMPScore:
             self._factor = ((maxlag - minlag) // lagstep + 1.0) ** score
 
     def __call__(self, x, y):
+        """Evaluate VAMP score on input features.
+
+        Parameters
+        ----------
+        x, y : (n_frames, n_features) torch.Tensor
+            Tensor of features.
+
+        Returns
+        -------
+        () torch.Tensor
+            VAMP score.
+
+        """
         if self.center:
             mean = 0.5 * (torch.mean(x, dim=0) + torch.mean(y, dim=0))
             x = x - mean
@@ -302,5 +550,18 @@ class VAMPScore:
 
 
 def _addones(x):
+    """Add a feature of all ones.
+
+    Parameters
+    ----------
+    x : (n_frames, n_features) torch.Tensor
+        Tensor of features.
+
+    Returns
+    -------
+    (n_frames, n_features + 1) torch.Tensor
+        Input tensor with an additional feature of all ones.
+
+    """
     ones = torch.ones(len(x), 1, dtype=x.dtype, device=x.device)
     return torch.cat([ones, x], dim=-1)
