@@ -25,6 +25,11 @@ Nonlinear IVAC
 .. autoclass:: ivac.NonlinearIVAC
     :members:
 
+Reweighting
+-----------
+
+.. autofunction:: ivac.estimate_weights
+
 Projection Distance
 -------------------
 

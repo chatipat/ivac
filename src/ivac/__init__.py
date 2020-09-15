@@ -8,6 +8,7 @@ from .linear import (
     orthonormalize,
     orthonormalize_coeffs,
     covmat,
+    estimate_weights,
 )
 
 from .nonlinear import (

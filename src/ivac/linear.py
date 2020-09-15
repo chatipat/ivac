@@ -63,7 +63,7 @@ class LinearVAC:
         self.nevecs = nevecs
         self.addones = addones
 
-    def fit(self, trajs):
+    def fit(self, trajs, weights=None):
         """Compute VAC results from input trajectories.
 
         Calculate and store VAC eigenvalues, eigenvector coefficients,
@@ -73,12 +73,14 @@ class LinearVAC:
         ----------
         trajs : list of (n_frames[i], n_features) ndarray
             List of featurized trajectories.
+        weights : list of (n_frames[i],) ndarray, optional
+            Weight for each frame in the trajectories.
 
         """
         if self.addones:
             trajs = _addones(trajs)
-        self.cov = _cov(trajs)
-        ct = _cov(trajs, self.lag)
+        self.cov = covmat(trajs, weights=weights)
+        ct = covmat(trajs, weights=weights, lag=self.lag)
         evals, evecs = linalg.eigh(_sym(ct), self.cov)
         self.evals = evals[::-1]
         self.evecs = evecs[:, ::-1]
@@ -202,7 +204,7 @@ class LinearIVAC:
         self.addones = addones
         self.method = method
 
-    def fit(self, trajs):
+    def fit(self, trajs, weights=None):
         """Compute IVAC results from input trajectories.
 
         Calculate and store IVAC eigenvalues, eigenvector coefficients,
@@ -212,13 +214,15 @@ class LinearIVAC:
         ----------
         trajs : list of (n_frames[i], n_features) ndarray
             List of featurized trajectories.
+        weights : list of (n_frames[i],) ndarray, optional
+            Weight for each frame in the trajectories.
 
         """
         if self.addones:
             trajs = _addones(trajs)
-        self.cov = _cov(trajs)
+        self.cov = covmat(trajs, weights=weights)
         lags = np.arange(self.minlag, self.maxlag + 1, self.lagstep)
-        ic = _icov(trajs, lags, method=self.method)
+        ic = _icov(trajs, weights=weights, lags=lags, method=self.method)
         evals, evecs = linalg.eigh(_sym(ic), self.cov)
         self.evals = evals[::-1]
         self.evecs = evecs[:, ::-1]
@@ -304,7 +308,7 @@ class LinearVACScan:
         self.addones = addones
         self.method = method
 
-    def fit(self, trajs):
+    def fit(self, trajs, weights=None):
         """Compute VAC results from input trajectories.
 
         Calculate and store VAC eigenvalues, eigenvector coefficients,
@@ -314,11 +318,13 @@ class LinearVACScan:
         ----------
         trajs : list of (n_frames[i], n_features) ndarray
             List of featurized trajectories.
+        weights : list of (n_frames[i],) ndarray, optional
+            Weight for each frame in the trajectories.
 
         """
         if self.addones:
             trajs = _addones(trajs)
-        self.cov = _cov(trajs)
+        self.cov = covmat(trajs, weights=weights)
         nlags = len(self.lags)
         nfeatures = len(self.cov)
         nevecs = self.nevecs
@@ -331,12 +337,16 @@ class LinearVACScan:
 
         if self.method == "direct":
             for n, lag in enumerate(self.lags):
-                ct = _cov(trajs, lag)
+                ct = covmat(trajs, weights=weights, lag=lag)
                 evals, evecs = linalg.eigh(_sym(ct), self.cov)
                 self.evals[n] = evals[::-1][:nevecs]
                 self.evecs[n] = evecs[:, ::-1][:, :nevecs]
                 self.its[n] = _vac_its(self.evals[n], lag)
         elif self.method == "fft":
+            if weights is not None:
+                raise ValueError(
+                    "method 'fft' currently doesn't support weights"
+                )
             cts = np.zeros((nlags, nfeatures, nfeatures))
             for i in range(nfeatures):
                 for j in range(i, nfeatures):
@@ -444,7 +454,7 @@ class LinearIVACScan:
         self.addones = addones
         self.method = method
 
-    def fit(self, trajs):
+    def fit(self, trajs, weights=None):
         """Compute IVAC results from input trajectories.
 
         Calculate and store IVAC eigenvalues, eigenvector coefficients,
@@ -454,11 +464,13 @@ class LinearIVACScan:
         ----------
         trajs : list of (n_frames[i], n_features) ndarray
             List of featurized trajectories.
+        weights : list of (n_frames[i],) ndarray, optional
+            Weight for each frame in the trajectories.
 
         """
         if self.addones:
             trajs = _addones(trajs)
-        self.cov = _cov(trajs)
+        self.cov = covmat(trajs, weights=weights)
         nlags = len(self.lags)
         nfeatures = len(self.cov)
         nevecs = self.nevecs
@@ -477,8 +489,12 @@ class LinearIVACScan:
                     self.lags[n + 1] + 1,
                     self.lagstep,
                 )
-                ics[n] = _icov(trajs, lags)
+                ics[n] = _icov(trajs, weights=weights, lags=lags)
         elif self.method == "fft":
+            if weights is not None:
+                raise ValueError(
+                    "method 'fft' currently doesn't support weights"
+                )
             lags = np.arange(
                 self.lags[0] + self.lagstep,
                 self.lags[-1] + 1,
@@ -498,7 +514,7 @@ class LinearIVACScan:
             raise ValueError("method must be 'direct' or 'fft'")
 
         for i in range(nlags):
-            ic = _cov(trajs, self.lags[i])
+            ic = covmat(trajs, weights=weights, lag=self.lags[i])
             evals, evecs = linalg.eigh(_sym(ic), self.cov)
             self.evals[i, i] = evals[::-1][:nevecs]
             self.evecs[i, i] = evecs[:, ::-1][:, :nevecs]
@@ -581,7 +597,7 @@ def projection_distance(u, v, weights=None, ortho=False):
     if ortho:
         u = orthonormalize(u)
         v = orthonormalize(v)
-    cov = _cov2(u, v, weights=weights)
+    cov = covmat(u, v, weights=weights)
     s = linalg.svdvals(cov)
     s = np.clip(s, 0.0, 1.0)
     return np.sqrt(len(cov) - np.sum(s ** 2))
@@ -682,7 +698,7 @@ def orthonormalize(features, weights=None):
         Orthonormalized features for the input trajectories.
 
     """
-    cov = _cov2(features, weights=weights)
+    cov = covmat(features, weights=weights)
     if np.allclose(cov, np.identity(len(cov))):
         return features
     u = linalg.cholesky(cov)
@@ -746,15 +762,21 @@ def orthonormalize_coeffs(coeffs, cov=None):
     return coeffs @ uinv
 
 
-def covmat(u, v=None, weights=None):
-    r"""Compute the covariance matrix between features.
+def covmat(u, v=None, weights=None, lag=0):
+    r"""Compute the (time lagged) covariance matrix between features.
 
-    For features :math:`\vec{u}_n`, :math:`\vec{v}_n`
-    with weights :math:`w_n` at each frame :math:`n` this computes
+    For a single trajectory with features
+    :math:`\vec{u}_t`, :math:`\vec{v}_t` and weights :math:`w_t`
+    at each frame :math:`n = 1, 2, \ldots, T`,
+    this function calculates
 
     .. math::
 
-        \mathbf{C} = \frac{\sum_n w_n \vec{u}_n \vec{v}_n^T}{\sum_n w_n}
+        \mathbf{C}(t) =
+            \frac{\sum_{t=1}^{T-\tau} w_t \vec{u}_t \vec{v}_{t+\tau}^T}
+            {\sum_{t=1}^{T-\tau} w_t}
+
+    where :math:`\tau` is the lag time.
 
     Parameters
     ----------
@@ -762,18 +784,135 @@ def covmat(u, v=None, weights=None):
         First set of features for a list of trajectories.
     v : list of (n_frames[i], n_features2) array-like, optional
         Second set of features for a list of trajectories.
-        If None, the auto-covariance matrix of `u` is computed instead.
+        If None, the first set of features is used.
     weights : list of (n_frames,) array-like, optional
         Weights for each frame of the trajectories.
         If None, weights are assumed to be uniform.
+    lag : int, optional
+        Lag time for the second set of feature in units of frames.
 
     Returns
     -------
     (n_features1, n_features2) ndarray
-        Covariance matrix.
+        Covariance matrix or time lagged covariance matrix.
 
     """
-    return _cov2(u, v, weights=weights)
+    if v is None:
+        v = u
+    if len(u) != len(v):
+        raise ValueError("mismatch in the number of trajectories")
+    cov = np.zeros((np.shape(u[0])[-1], np.shape(v[0])[-1]))
+    count = 0.0
+    if weights is None:
+        for x, y in zip(u, v):
+            x = np.asarray(x, dtype=np.float64)
+            y = np.asarray(y, dtype=np.float64)
+
+            # apply time lag
+            x = x[: len(x) - lag]
+            y = y[lag:]
+
+            cov += x.T @ y
+            count += len(x)
+    else:
+        if len(u) != len(weights):
+            raise ValueError("mismatch in the number of trajectories")
+        for x, y, w in zip(u, v, weights):
+            x = np.asarray(x, dtype=np.float64)
+            y = np.asarray(y, dtype=np.float64)
+            w = np.asarray(w, dtype=np.float64)
+
+            # apply time lag
+            x = x[: len(x) - lag]
+            y = y[lag:]
+            w = w[: len(w) - lag]
+
+            cov += np.einsum("n,ni,nj->ij", w, x, y)
+            count += np.sum(w)
+    return cov / count
+
+
+def estimate_weights(
+    trajs,
+    minlag,
+    maxlag=None,
+    lagstep=1,
+    weights=None,
+    addones=False,
+    method="direct",
+):
+    """Estimate weights for trajectories sampled off-equilibrium.
+
+    This function estimates the weight of each frame of the input
+    trajectories using the dominant left eigenvector of the integrated
+    transition operator.
+
+    Parameters
+    ----------
+    trajs : list of (n_frames[i], n_features) array-like
+        List of featurized trajectories.
+    minlag : int
+        Minimum lag time in units of frames.
+    maxlag : int, optional
+        Maximum lag time in units of frames.
+        If None, maxlag is set to minlag.
+    lagstep : int, optional
+        Frames between adjacent lag times. The lag times used are
+        minlag, minlag + lagstep, ..., maxlag.
+    weights : list of (n_frames[i],) array-like
+        Initial weight of each frame. If None, assumes uniform weights.
+    addones : bool, optional
+        If True, add a feature of ones to the input features.
+        If False, assumes that the constant feature is already contained
+        within the input features.
+    method : str, optional
+        Method to calculate the integrated correlation matrix.
+        Currently, 'direct' and 'fft' are supported.
+
+    """
+    if maxlag is None:
+        maxlag = minlag
+    if (maxlag - minlag) % lagstep != 0:
+        raise ValueError("lagstep must evenly divide maxlag - minlag")
+    if addones:
+        trajs = _addones(trajs)
+    lags = np.arange(minlag, maxlag + 1, lagstep)
+    icov = _icov(trajs, lags, weights=weights, method=method) / len(lags)
+    cov = covmat(trajs, weights=weights)
+    evals, evecs = linalg.eig(icov, cov, left=True, right=False)
+    order = np.argsort(np.abs(evals))[::-1]
+    evals = evals[order]
+    if not np.isclose(evals[0], 1.0):
+        raise ValueError("dominant eigenvalue {} is not 1".format(evals[0]))
+    if np.any(evals[1:] >= 1.0) or np.any(np.isclose(evals[1:], 1.0)):
+        raise ValueError("more than one eigenvalue is near 1")
+    coeffs = np.real_if_close(evecs[:, order[0]])
+    if not np.isrealobj(coeffs):
+        warnings.warn("estimated weights are complex, taking real part")
+        coeffs = np.real(coeffs)
+    new_weights = []
+    total = 0.0
+    if weights is None:
+        for traj in trajs:
+            traj = np.asarray(traj, dtype=np.float64)
+            w = traj @ coeffs
+            new_weights.append(w)
+            total += np.sum(w)
+    else:
+        for traj, w in zip(trajs, weights):
+            traj = np.asarray(traj, dtype=np.float64)
+            w = w * (traj @ coeffs)
+            new_weights.append(w)
+            total += np.sum(w)
+    if total >= 0.0:
+        sign = 1.0
+    else:
+        sign = -1.0
+    for w in new_weights:
+        w *= sign
+        if np.any(w < 0.0):
+            warnings.warn("some estimated weights are negative")
+    return new_weights
 
 
 def _vac_its(evals, lag):
@@ -899,44 +1038,7 @@ def _addones(trajs):
     return result
 
 
-def _cov(trajs, lag=0):
-    r"""Compute the time lagged covariance matrix.
-
-    For a single trajectory
-    :math:`\vec{x}_0, \vec{x}_1, \ldots, \vec{x}_{T-1}`,
-    this function calculates
-
-    .. math::
-
-        \mathbf{C}(t) =
-            \frac{1}{T-t} \sum_{n=0}^{T-t-1} \vec{x}_n \vec{x}_{n+t}^T
-
-    Parameters
-    ----------
-    trajs : list of (n_frames[i], n_features) array-like
-        List of featurized trajectories.
-    lag : int, optional
-        Lag time in units of frames.
-
-    Returns
-    -------
-    (n_features, n_features) ndarray
-        Time lagged covariance matrix.
-
-    """
-    nfeatures = np.shape(trajs[0])[-1]
-    cov = np.zeros((nfeatures, nfeatures))
-    count = 0.0
-    for traj in trajs:
-        traj = np.asarray(traj, dtype=np.float64)
-        x = traj[: len(traj) - lag]
-        y = traj[lag:]
-        cov += x.T @ y
-        count += len(x)
-    return cov / count
-
-
-def _icov(trajs, lags, method="direct"):
+def _icov(trajs, lags, weights=None, method="direct"):
     r"""Compute the integrated covariance matrix over given lag times.
 
     For a single trajectory
@@ -975,7 +1077,7 @@ def _icov(trajs, lags, method="direct"):
     ic = np.zeros((nfeatures, nfeatures))
     if method == "direct":
         for lag in lags:
-            ic += _cov(trajs, lag)
+            ic += covmat(trajs, weights=weights, lag=lag)
     elif method == "fft":
         for i in range(nfeatures):
             for j in range(i, nfeatures):
@@ -1041,54 +1143,3 @@ def _sym(mat):
         Symmetrized matrix.
     """
     return 0.5 * (mat + mat.T)
-
-
-def _cov2(u, v=None, weights=None):
-    r"""Compute the covariance matrix between two sets of features.
-
-    For features :math:`\vec{u}_n`, :math:`\vec{v}_n`
-    with weights :math:`w_n` at each frame :math:`n` this computes
-
-    .. math::
-
-        \mathbf{C} = \frac{\sum_n w_n \vec{u}_n \vec{v}_n^T}{\sum_n w_n}
-
-    Parameters
-    ----------
-    u : list of (n_frames[i], n_features1) array-like
-        First set of features for a list of trajectories.
-    v : list of (n_frames[i], n_features2) array-like, optional
-        Second set of features for a list of trajectories.
-        If None, the auto-covariance matrix of u is computed instead.
-    weights : list of (n_frames,) array-like, optional
-        Weights for each frame of the trajectories.
-        If None, weights are assumed to be uniform.
-
-    Returns
-    -------
-    (n_features1, n_features2) ndarray
-        Covariance matrix.
-
-    """
-    if v is None:
-        v = u
-    if len(u) != len(v):
-        raise ValueError("mismatch in the number of trajectories")
-    cov = np.zeros((np.shape(u[0])[-1], np.shape(v[0])[-1]))
-    count = 0.0
-    if weights is None:
-        for x, y in zip(u, v):
-            x = np.asarray(x, dtype=np.float64)
-            y = np.asarray(y, dtype=np.float64)
-            cov += x.T @ y
-            count += len(x)
-    else:
-        if len(u) != len(weights):
-            raise ValueError("mismatch in the number of trajectories")
-        for x, y, w in zip(u, v, weights):
-            x = np.asarray(x, dtype=np.float64)
-            y = np.asarray(y, dtype=np.float64)
-            w = np.asarray(w, dtype=np.float64)
-            cov += np.einsum("n,ni,nj->ij", w, x, y)
-            count += np.sum(w)
-    return cov / count
