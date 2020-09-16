@@ -883,9 +883,9 @@ def estimate_weights(
     order = np.argsort(np.abs(evals))[::-1]
     evals = evals[order]
     if not np.isclose(evals[0], 1.0):
-        raise ValueError("dominant eigenvalue {} is not 1".format(evals[0]))
+        warnings.warn("dominant eigenvalue {} is not 1".format(evals[0]))
     if np.any(evals[1:] >= 1.0) or np.any(np.isclose(evals[1:], 1.0)):
-        raise ValueError("more than one eigenvalue is near 1")
+        warnings.warn("more than one eigenvalue is near 1")
     coeffs = np.real_if_close(evecs[:, order[0]])
     if not np.isrealobj(coeffs):
         warnings.warn("estimated weights are complex, taking real part")
