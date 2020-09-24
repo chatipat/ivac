@@ -288,7 +288,7 @@ class LinearIVAC:
         reweight=False,
         adjust=False,
         truncate=None,
-        method="direct",
+        method="conv",
     ):
         if minlag > maxlag:
             raise ValueError("minlag must be less than or equal to maxlag")
@@ -383,11 +383,18 @@ class LinearIVAC:
                     evecs = evecs[:, order]
                     w = np.real_if_close(evecs[:, 0])
 
-                    if not np.isclose(evals[0], 1.0):
-                        warnings.warn("dominant eigenvalue is not 1")
-                    if not np.all(np.abs(evals[1:]) < 1.0):
+                    nlags = (self.maxlag - self.minlag) // self.lagstep + 1.0
+                    if not np.isclose(evals[0], nlags):
                         warnings.warn(
-                            "multiple eigenvalues have magnitudes above 1"
+                            "dominant eigenvalue ({}) is not {}".format(
+                                evals[0], nlags
+                            )
+                        )
+                    if not np.all(np.abs(evals[1:]) < nlags):
+                        warnings.warn(
+                            "multiple eigenvalues have magnitudes above {}".format(
+                                nlags
+                            )
                         )
                     if not np.isrealobj(w):
                         warnings.warn("estimated weights are complex")
@@ -397,6 +404,7 @@ class LinearIVAC:
                     c0 = 0.5 * (
                         utils.corr(f0, f0, trajs, self.truncate, w)
                         + utils.corr(f1, f1, trajs, self.truncate, w)
+                        / nlags ** 2
                     )
                 else:
                     c0 = utils.corr(f0, f0, trajs, self.truncate, w)
