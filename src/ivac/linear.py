@@ -2,6 +2,7 @@ import numpy as np
 import numba as nb
 import warnings
 from scipy import linalg, optimize, signal
+from . import utils
 
 
 class LinearVAC:
@@ -39,6 +40,18 @@ class LinearVAC:
     addones : bool, optional
         If True, add a feature of ones before solving VAC.
         This increases n_features by 1.
+    reweight : bool, optional
+        If True, reweight trajectories to equilibrium.
+    adjust : bool, optional
+        If True, adjust :math:`C(0)` to ensure that the trivial
+        eigenvector is exactly solved.
+    truncate : bool or int, optional
+        Truncate trajectories so that :math:`C(t)` and :math:`C(0)`
+        use the same number of data points.
+        If int, this is the number of data points removed.
+        If True, lag data points are removed.
+        By default, trajectories are not truncated
+        unless reweight is True.
 
     Attributes
     ----------
@@ -58,12 +71,30 @@ class LinearVAC:
 
     """
 
-    def __init__(self, lag, nevecs=None, addones=False):
+    def __init__(
+        self,
+        lag,
+        nevecs=None,
+        addones=False,
+        reweight=False,
+        adjust=False,
+        truncate=None,
+    ):
+        if truncate is None:
+            truncate = reweight
+        if truncate is True:
+            truncate = lag
+        if truncate is not False and truncate < lag:
+            raise ValueError("truncate is less than lag")
+
         self.lag = lag
         self.nevecs = nevecs
         self.addones = addones
+        self.reweight = reweight
+        self.adjust = adjust
+        self.truncate = truncate
 
-    def fit(self, trajs, weights=None):
+    def fit(self, trajs):
         """Compute VAC results from input trajectories.
 
         Calculate and store VAC eigenvalues, eigenvector coefficients,
@@ -73,15 +104,63 @@ class LinearVAC:
         ----------
         trajs : list of (n_frames[i], n_features) ndarray
             List of featurized trajectories.
-        weights : list of (n_frames[i],) ndarray, optional
-            Weight for each frame in the trajectories.
 
         """
+        trajs = utils.preprocess_trajs(trajs)
         if self.addones:
             trajs = _addones(trajs)
-        self.cov = covmat(trajs, weights=weights)
-        ct = covmat(trajs, weights=weights, lag=self.lag)
-        evals, evecs = linalg.eigh(_sym(ct), self.cov)
+
+        f0 = utils.delay(0)
+        f1 = utils.delay(self.lag)
+
+        if self.truncate is False:
+
+            if self.reweight:
+                raise ValueError(
+                    "reweighting is only supported for mode 'truncate'"
+                )
+
+            ct = utils.corr(f0, f1, trajs, self.lag)
+            if self.adjust:
+                c0 = 0.5 * (
+                    utils.corr(f0, f0, trajs, self.lag)
+                    + utils.corr(f1, f1, trajs, self.lag)
+                )
+            else:
+                c0 = utils.corr(f0, f0, trajs)
+
+        else:
+
+            w = None
+            if self.reweight:
+                ct = utils.corr(f0, f1, trajs, self.truncate)
+                c0 = utils.corr(f0, f0, trajs, self.truncate)
+
+                evals, evecs = linalg.eig(ct.T, c0)
+                evals = evals[::-1]
+                evecs = evecs[:, ::-1]
+                w = np.real_if_close(evecs[:, 0])
+
+                if not np.isclose(evals[0], 1.0):
+                    warnings.warn("dominant eigenvalue is not 1")
+                if not np.all(np.abs(evals[1:]) < 1.0):
+                    warnings.warn(
+                        "multiple eigenvalues have magnitudes above 1"
+                    )
+                if not np.isrealobj(w):
+                    warnings.warn("estimated weights are complex")
+
+            ct = utils.corr(f0, f1, trajs, self.truncate, w)
+            if self.adjust:
+                c0 = 0.5 * (
+                    utils.corr(f0, f0, trajs, self.truncate, w)
+                    + utils.corr(f1, f1, trajs, self.truncate, w)
+                )
+            else:
+                c0 = utils.corr(f0, f0, trajs, self.truncate, w)
+
+        evals, evecs = linalg.eigh(_sym(ct), c0)
+        self.cov = c0
         self.evals = evals[::-1]
         self.evecs = evecs[:, ::-1]
         self.its = _vac_its(self.evals, self.lag)
@@ -155,10 +234,24 @@ class LinearIVAC:
     addones : bool, optional
         If True, add a feature of ones before solving VAC.
         This increases n_features by 1.
+    reweight : bool, optional
+        If True, reweight trajectories to equilibrium.
+    adjust : bool, optional
+        If True, adjust :math:`C(0)` to ensure that the trivial
+        eigenvector is exactly solved.
+    truncate : bool or int, optional
+        Truncate trajectories so that each :math:`C(t)` and :math:`C(0)`
+        use the same number of data points.
+        If int, this is the number of data points removed.
+        If True, maxlag data points are removed.
+        By default, trajectories are not truncated
+        unless reweight is True.
     method : str, optional
         Method to compute the integrated covariance matrix.
-        Currently, 'direct' and 'fft' are supported.
+        Currently, 'direct', 'conv', and 'fft' are supported.
         Method 'direct' sums the time lagged covariance matrices.
+        Method 'conv' integrates features over lag times before
+        computing the covariance matrices.
         Method 'fft' uses a FFT to compute the time lagged correlation
         for each pair of basis functions.
 
@@ -191,20 +284,32 @@ class LinearIVAC:
         lagstep=1,
         nevecs=None,
         addones=False,
+        reweight=False,
+        adjust=False,
+        truncate=None,
         method="direct",
     ):
         if minlag > maxlag:
             raise ValueError("minlag must be less than or equal to maxlag")
         if (maxlag - minlag) % lagstep != 0:
             raise ValueError("lag time interval must be a multiple of lagstep")
+        if truncate is None:
+            truncate = reweight
+        if truncate is True:
+            truncate = maxlag
+        if truncate is not False and truncate < maxlag:
+            raise ValueError("truncate is less than maxlag")
         self.minlag = minlag
         self.maxlag = maxlag
         self.lagstep = lagstep
         self.nevecs = nevecs
         self.addones = addones
+        self.reweight = reweight
+        self.adjust = adjust
+        self.truncate = truncate
         self.method = method
 
-    def fit(self, trajs, weights=None):
+    def fit(self, trajs):
         """Compute IVAC results from input trajectories.
 
         Calculate and store IVAC eigenvalues, eigenvector coefficients,
@@ -214,16 +319,91 @@ class LinearIVAC:
         ----------
         trajs : list of (n_frames[i], n_features) ndarray
             List of featurized trajectories.
-        weights : list of (n_frames[i],) ndarray, optional
-            Weight for each frame in the trajectories.
 
         """
+        trajs = utils.preprocess_trajs(trajs)
         if self.addones:
             trajs = _addones(trajs)
-        self.cov = covmat(trajs, weights=weights)
-        lags = np.arange(self.minlag, self.maxlag + 1, self.lagstep)
-        ic = _icov(trajs, weights=weights, lags=lags, method=self.method)
-        evals, evecs = linalg.eigh(_sym(ic), self.cov)
+
+        if self.method in ["direct", "fft"]:
+
+            if self.truncate is not False:
+                raise ValueError(
+                    "truncate is only supported with method 'conv'"
+                )
+            if self.reweight:
+                raise ValueError(
+                    "reweight is only supported with method 'conv'"
+                )
+            if self.adjust:
+                raise ValueError("adjust is only supported with method 'conv'")
+
+            lags = np.arange(self.minlag, self.maxlag + 1, self.lagstep)
+            c0 = covmat(trajs)
+            ic = _icov(trajs, lags=lags, method=self.method)
+
+        elif self.method == "conv":
+
+            if self.truncate is False:
+                if self.reweight:
+                    raise ValueError(
+                        "reweighting is only supported with mode 'truncate'"
+                    )
+
+                lengths = np.array([len(traj) for traj in trajs])
+
+                f0 = utils.delay(0)
+                f1 = utils.integrate_all(
+                    self.minlag, self.maxlag, self.lagstep, lengths
+                )
+
+                fw = None
+                if self.adjust:
+                    fw = utils.adjust_all(
+                        self.minlag, self.maxlag, self.lagstep, lengths
+                    )
+
+                ic = utils.corr(f0, f1, trajs)
+                c0 = utils.corr(f0, f0, trajs, weights=fw)
+
+            else:
+
+                f0 = utils.delay(0)
+                f1 = utils.integrate(self.minlag, self.maxlag, self.lagstep)
+
+                w = None
+                if self.reweight:
+                    ic = utils.corr(f0, f1, trajs, self.truncate)
+                    c0 = utils.corr(f0, f0, trajs, self.truncate)
+
+                    evals, evecs = linalg.eig(ic.T, c0)
+                    evals = evals[::-1]
+                    evecs = evecs[:, ::-1]
+                    w = np.real_if_close(evecs[:, 0])
+
+                    if not np.isclose(evals[0], 1.0):
+                        warnings.warn("dominant eigenvalue is not 1")
+                    if not np.all(np.abs(evals[1:]) < 1.0):
+                        warnings.warn(
+                            "multiple eigenvalues have magnitudes above 1"
+                        )
+                    if not np.isrealobj(w):
+                        warnings.warn("estimated weights are complex")
+
+                ic = utils.corr(f0, f1, trajs, self.truncate, w)
+                if self.adjust:
+                    c0 = 0.5 * (
+                        utils.corr(f0, f0, trajs, self.truncate, w)
+                        + utils.corr(f1, f1, trajs, self.truncate, w)
+                    )
+                else:
+                    c0 = utils.corr(f0, f0, trajs, self.truncate, w)
+
+        else:
+            raise ValueError("method must be 'direct', 'fft', or 'conv'")
+
+        evals, evecs = linalg.eigh(_sym(ic), c0)
+        self.cov = c0
         self.evals = evals[::-1]
         self.evecs = evecs[:, ::-1]
         self.its = _ivac_its(
@@ -308,7 +488,7 @@ class LinearVACScan:
         self.addones = addones
         self.method = method
 
-    def fit(self, trajs, weights=None):
+    def fit(self, trajs):
         """Compute VAC results from input trajectories.
 
         Calculate and store VAC eigenvalues, eigenvector coefficients,
@@ -318,13 +498,11 @@ class LinearVACScan:
         ----------
         trajs : list of (n_frames[i], n_features) ndarray
             List of featurized trajectories.
-        weights : list of (n_frames[i],) ndarray, optional
-            Weight for each frame in the trajectories.
 
         """
         if self.addones:
             trajs = _addones(trajs)
-        self.cov = covmat(trajs, weights=weights)
+        self.cov = covmat(trajs)
         nlags = len(self.lags)
         nfeatures = len(self.cov)
         nevecs = self.nevecs
@@ -337,16 +515,12 @@ class LinearVACScan:
 
         if self.method == "direct":
             for n, lag in enumerate(self.lags):
-                ct = covmat(trajs, weights=weights, lag=lag)
+                ct = covmat(trajs, lag=lag)
                 evals, evecs = linalg.eigh(_sym(ct), self.cov)
                 self.evals[n] = evals[::-1][:nevecs]
                 self.evecs[n] = evecs[:, ::-1][:, :nevecs]
                 self.its[n] = _vac_its(self.evals[n], lag)
         elif self.method == "fft":
-            if weights is not None:
-                raise ValueError(
-                    "method 'fft' currently doesn't support weights"
-                )
             cts = np.zeros((nlags, nfeatures, nfeatures))
             for i in range(nfeatures):
                 for j in range(i, nfeatures):
@@ -454,7 +628,7 @@ class LinearIVACScan:
         self.addones = addones
         self.method = method
 
-    def fit(self, trajs, weights=None):
+    def fit(self, trajs):
         """Compute IVAC results from input trajectories.
 
         Calculate and store IVAC eigenvalues, eigenvector coefficients,
@@ -464,13 +638,11 @@ class LinearIVACScan:
         ----------
         trajs : list of (n_frames[i], n_features) ndarray
             List of featurized trajectories.
-        weights : list of (n_frames[i],) ndarray, optional
-            Weight for each frame in the trajectories.
 
         """
         if self.addones:
             trajs = _addones(trajs)
-        self.cov = covmat(trajs, weights=weights)
+        self.cov = covmat(trajs)
         nlags = len(self.lags)
         nfeatures = len(self.cov)
         nevecs = self.nevecs
@@ -489,12 +661,8 @@ class LinearIVACScan:
                     self.lags[n + 1] + 1,
                     self.lagstep,
                 )
-                ics[n] = _icov(trajs, weights=weights, lags=lags)
+                ics[n] = _icov(trajs, lags=lags)
         elif self.method == "fft":
-            if weights is not None:
-                raise ValueError(
-                    "method 'fft' currently doesn't support weights"
-                )
             lags = np.arange(
                 self.lags[0] + self.lagstep,
                 self.lags[-1] + 1,
@@ -514,7 +682,7 @@ class LinearIVACScan:
             raise ValueError("method must be 'direct' or 'fft'")
 
         for i in range(nlags):
-            ic = covmat(trajs, weights=weights, lag=self.lags[i])
+            ic = covmat(trajs, lag=self.lags[i])
             evals, evecs = linalg.eigh(_sym(ic), self.cov)
             self.evals[i, i] = evals[::-1][:nevecs]
             self.evecs[i, i] = evecs[:, ::-1][:, :nevecs]
@@ -830,89 +998,6 @@ def covmat(u, v=None, weights=None, lag=0):
             cov += np.einsum("n,ni,nj->ij", w, x, y)
             count += np.sum(w)
     return cov / count
-
-
-def estimate_weights(
-    trajs,
-    minlag,
-    maxlag=None,
-    lagstep=1,
-    weights=None,
-    addones=False,
-    method="direct",
-):
-    """Estimate weights for trajectories sampled off-equilibrium.
-
-    This function estimates the weight of each frame of the input
-    trajectories using the dominant left eigenvector of the integrated
-    transition operator.
-
-    Parameters
-    ----------
-    trajs : list of (n_frames[i], n_features) array-like
-        List of featurized trajectories.
-    minlag : int
-        Minimum lag time in units of frames.
-    maxlag : int, optional
-        Maximum lag time in units of frames.
-        If None, maxlag is set to minlag.
-    lagstep : int, optional
-        Frames between adjacent lag times. The lag times used are
-        minlag, minlag + lagstep, ..., maxlag.
-    weights : list of (n_frames[i],) array-like
-        Initial weight of each frame. If None, assumes uniform weights.
-    addones : bool, optional
-        If True, add a feature of ones to the input features.
-        If False, assumes that the constant feature is already contained
-        within the input features.
-    method : str, optional
-        Method to calculate the integrated correlation matrix.
-        Currently, 'direct' and 'fft' are supported.
-
-    """
-    if maxlag is None:
-        maxlag = minlag
-    if (maxlag - minlag) % lagstep != 0:
-        raise ValueError("lagstep must evenly divide maxlag - minlag")
-    if addones:
-        trajs = _addones(trajs)
-    lags = np.arange(minlag, maxlag + 1, lagstep)
-    icov = _icov(trajs, lags, weights=weights, method=method) / len(lags)
-    cov = covmat(trajs, weights=weights)
-    evals, evecs = linalg.eig(icov, cov, left=True, right=False)
-    order = np.argsort(np.abs(evals))[::-1]
-    evals = evals[order]
-    if not np.isclose(evals[0], 1.0):
-        warnings.warn("dominant eigenvalue {} is not 1".format(evals[0]))
-    if np.any(evals[1:] >= 1.0) or np.any(np.isclose(evals[1:], 1.0)):
-        warnings.warn("more than one eigenvalue is near 1")
-    coeffs = np.real_if_close(evecs[:, order[0]])
-    if not np.isrealobj(coeffs):
-        warnings.warn("estimated weights are complex, taking real part")
-        coeffs = np.real(coeffs)
-    new_weights = []
-    total = 0.0
-    if weights is None:
-        for traj in trajs:
-            traj = np.asarray(traj, dtype=np.float64)
-            w = traj @ coeffs
-            new_weights.append(w)
-            total += np.sum(w)
-    else:
-        for traj, w in zip(trajs, weights):
-            traj = np.asarray(traj, dtype=np.float64)
-            w = w * (traj @ coeffs)
-            new_weights.append(w)
-            total += np.sum(w)
-    if total >= 0.0:
-        sign = 1.0
-    else:
-        sign = -1.0
-    for w in new_weights:
-        w *= sign
-        if np.any(w < 0.0):
-            warnings.warn("some estimated weights are negative")
-    return new_weights
 
 
 def _vac_its(evals, lag):
