@@ -163,6 +163,14 @@ def test_ivac():
     assert np.allclose(test2.its[:nevecs], test.its[:nevecs])
     assert allclose_trajs_sign(test2.transform(trajs), evecs)
 
+    # fftconv gives the same result
+    test2 = ivac.LinearIVAC(minlag, maxlag, nevecs=nevecs, method="fftconv")
+    test2.fit(trajs)
+    assert test2.method == "fftconv"
+    assert np.allclose(test2.evals[:nevecs], test.evals[:nevecs])
+    assert np.allclose(test2.its[:nevecs], test.its[:nevecs])
+    assert allclose_trajs_sign(test2.transform(trajs), evecs)
+
     # trajectory order doesn't matter
     test2 = ivac.LinearIVAC(minlag, maxlag, nevecs=nevecs)
     test2.fit(trajs[::-1])

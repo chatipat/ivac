@@ -1,5 +1,5 @@
 import numpy as np
-from scipy import linalg
+from scipy import linalg, signal
 
 
 def preprocess_trajs(trajs):
@@ -88,30 +88,65 @@ def delay(lag):
     return func
 
 
-def integrate(minlag, maxlag, lagstep=1):
+def integrate(minlag, maxlag, lagstep=1, mode="direct"):
     """Create a function that integrates a trajectory over lag times."""
 
-    def func(traj, length):
-        result = np.zeros_like(traj[:length])
-        for lag in range(minlag, maxlag + 1, lagstep):
-            result += traj[lag : length + lag]
-        return result
+    if mode == "direct":
+
+        def func(traj, length):
+            result = np.zeros_like(traj[:length])
+            for lag in range(minlag, maxlag + 1, lagstep):
+                result += traj[lag : length + lag]
+            return result
+
+    elif mode == "fft":
+
+        lags = np.arange(minlag, maxlag + 1, lagstep)
+        window = np.zeros(maxlag - minlag + 1)
+        window[lags - minlag] = 1.0
+        window = window[::-1, None]
+
+        def func(traj, length):
+            traj = traj[minlag : length + maxlag]
+            return signal.fftconvolve(traj, window, mode="valid", axes=0)
+
+    else:
+        raise ValueError("mode must be 'direct' or 'fft'")
 
     return func
 
 
-def integrate_all(minlag, maxlag, lagstep, lengths):
+def integrate_all(minlag, maxlag, lagstep, lengths, mode="direct"):
     """Create a function for IVAC's integrated correlation matrix."""
     lags = np.arange(minlag, maxlag + 1, lagstep)
     samples = np.sum(np.maximum(lengths[None, :] - lags[:, None], 0), axis=-1)
     weights = np.sum(lengths) / samples
 
-    def func(traj, length):
-        iy = np.zeros_like(traj[:length])
-        for lag, weight in zip(lags, weights):
-            if length > lag:
-                iy[: length - lag] += weight * traj[lag:length]
-        return iy
+    if mode == "direct":
+
+        def func(traj, length):
+            iy = np.zeros_like(traj[:length])
+            for lag, weight in zip(lags, weights):
+                if length > lag:
+                    iy[: length - lag] += weight * traj[lag:length]
+            return iy
+
+    elif mode == "fft":
+
+        window = np.zeros(maxlag - minlag + 1)
+        window[lags - minlag] = weights
+        window = window[::-1, None]
+
+        def func(traj, length):
+            traj = traj[minlag : length + maxlag]
+            conv = signal.fftconvolve(traj, window, mode="full", axes=0)
+            conv = conv[maxlag - minlag :][:length]
+            iy = np.zeros((length, traj.shape[-1]))
+            iy[: len(conv)] = conv
+            return iy
+
+    else:
+        raise ValueError("mode must be 'direct' or 'fft'")
 
     return func
 

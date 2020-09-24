@@ -249,10 +249,11 @@ class LinearIVAC:
         unless reweight is True.
     method : str, optional
         Method to compute the integrated covariance matrix.
-        Currently, 'direct', 'conv', and 'fft' are supported.
+        Currently, 'direct', 'conv', 'fftconv', and 'fft' are supported.
         Method 'direct' sums the time lagged covariance matrices.
         Method 'conv' integrates features over lag times before
         computing the covariance matrices.
+        Method 'fftconv' does the same as 'conv', but uses a FFT.
         Method 'fft' uses a FFT to compute the time lagged correlation
         for each pair of basis functions.
 
@@ -343,7 +344,8 @@ class LinearIVAC:
             c0 = covmat(trajs)
             ic = _icov(trajs, lags=lags, method=self.method)
 
-        elif self.method == "conv":
+        elif self.method in ["conv", "fftconv"]:
+            mode = {"conv": "direct", "fftconv": "fft"}[self.method]
 
             if self.truncate is False:
                 if self.reweight:
@@ -355,7 +357,7 @@ class LinearIVAC:
 
                 f0 = utils.delay(0)
                 f1 = utils.integrate_all(
-                    self.minlag, self.maxlag, self.lagstep, lengths
+                    self.minlag, self.maxlag, self.lagstep, lengths, mode=mode
                 )
 
                 fw = None
@@ -370,7 +372,9 @@ class LinearIVAC:
             else:
 
                 f0 = utils.delay(0)
-                f1 = utils.integrate(self.minlag, self.maxlag, self.lagstep)
+                f1 = utils.integrate(
+                    self.minlag, self.maxlag, self.lagstep, mode=mode
+                )
 
                 w = None
                 if self.reweight:
@@ -410,7 +414,9 @@ class LinearIVAC:
                     c0 = utils.corr(f0, f0, trajs, self.truncate, w)
 
         else:
-            raise ValueError("method must be 'direct', 'fft', or 'conv'")
+            raise ValueError(
+                "method must be 'direct', 'fft', 'fftconv', or 'conv'"
+            )
 
         evals, evecs = linalg.eigh(_sym(ic), c0)
         self.cov = c0
