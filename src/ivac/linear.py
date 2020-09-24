@@ -137,8 +137,9 @@ class LinearVAC:
                 c0 = utils.corr(f0, f0, trajs, self.truncate)
 
                 evals, evecs = linalg.eig(ct.T, c0)
-                evals = evals[::-1]
-                evecs = evecs[:, ::-1]
+                order = np.argsort(np.abs(evals))[::-1]
+                evals = evals[order]
+                evecs = evecs[:, order]
                 w = np.real_if_close(evecs[:, 0])
 
                 if not np.isclose(evals[0], 1.0):
@@ -377,8 +378,9 @@ class LinearIVAC:
                     c0 = utils.corr(f0, f0, trajs, self.truncate)
 
                     evals, evecs = linalg.eig(ic.T, c0)
-                    evals = evals[::-1]
-                    evecs = evecs[:, ::-1]
+                    order = np.argsort(np.abs(evals))[::-1]
+                    evals = evals[order]
+                    evecs = evecs[:, order]
                     w = np.real_if_close(evecs[:, 0])
 
                     if not np.isclose(evals[0], 1.0):
