@@ -1,3 +1,5 @@
+import os
+
 project = "IVAC"
 author = "Chatipat Lorpaiboon"
 year = "2020"
@@ -11,7 +13,12 @@ extensions = [
     "sphinx.ext.viewcode",
 ]
 
-html_theme = "sphinx_rtd_theme"
+master_doc = "index"
+
+on_rtd = os.environ.get("READTHEDOCS", None) == "True"
+if not on_rtd:
+    html_theme = "sphinx_rtd_theme"
+
 html_short_title = "{}-{}".format(project, version)
 html_sidebars = {"**": ["searchbox.html", "globaltoc.html"]}
 
