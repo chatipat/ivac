@@ -151,6 +151,22 @@ def integrate_all(minlag, maxlag, lagstep, lengths, mode="direct"):
     return func
 
 
+def adjust(minlag, maxlag, lagstep, coeffs):
+    """Create a function for IVAC's adjusted correlation matrix."""
+
+    def func(traj):
+        w = np.zeros(len(traj))
+        length = len(traj) - maxlag
+        if length > 0:
+            weights = traj[:length] @ coeffs
+            for lag in range(minlag, maxlag + 1, lagstep):
+                w[:length] += weights
+                w[lag : length + lag] += weights
+        return w
+
+    return func
+
+
 def adjust_all(minlag, maxlag, lagstep, lengths):
     """Create a function for IVAC's adjusted correlation matrix."""
     lags = np.arange(minlag, maxlag + 1, lagstep)

@@ -405,10 +405,13 @@ class LinearIVAC:
 
                 ic = utils.corr(f0, f1, trajs, self.truncate, w)
                 if self.adjust:
-                    c0 = 0.5 * (
-                        utils.corr(f0, f0, trajs, self.truncate, w)
-                        + utils.corr(f1, f1, trajs, self.truncate, w)
-                        / nlags ** 2
+                    c0 = utils.corr(
+                        f0,
+                        f0,
+                        trajs,
+                        weights=utils.adjust(
+                            self.minlag, self.maxlag, self.lagstep, w
+                        ),
                     )
                 else:
                     c0 = utils.corr(f0, f0, trajs, self.truncate, w)
