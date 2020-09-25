@@ -110,9 +110,6 @@ class LinearVAC:
         if self.addones:
             trajs = _addones(trajs)
 
-        f0 = utils.delay(0)
-        f1 = utils.delay(self.lag)
-
         if self.truncate is False:
 
             if self.reweight:
@@ -120,21 +117,18 @@ class LinearVAC:
                     "reweighting is only supported for mode 'truncate'"
                 )
 
-            ct = utils.corr(f0, f1, trajs, self.lag)
+            ct = utils.ct_all(trajs, self.lag)
             if self.adjust:
-                c0 = 0.5 * (
-                    utils.corr(f0, f0, trajs, self.lag)
-                    + utils.corr(f1, f1, trajs, self.lag)
-                )
+                c0 = utils.c0_all_adj_ct(trajs, self.lag)
             else:
-                c0 = utils.corr(f0, f0, trajs)
+                c0 = utils.c0_all(trajs)
 
         else:
 
             w = None
             if self.reweight:
-                ct = utils.corr(f0, f1, trajs, self.truncate)
-                c0 = utils.corr(f0, f0, trajs, self.truncate)
+                ct = utils.ct_trunc(trajs, self.lag, self.truncate)
+                c0 = utils.c0_trunc(trajs, self.truncate)
 
                 evals, evecs = linalg.eig(ct.T, c0)
                 order = np.argsort(np.abs(evals))[::-1]
@@ -151,14 +145,11 @@ class LinearVAC:
                 if not np.isrealobj(w):
                     warnings.warn("estimated weights are complex")
 
-            ct = utils.corr(f0, f1, trajs, self.truncate, w)
+            ct = utils.ct_rt(trajs, self.lag, self.truncate, w)
             if self.adjust:
-                c0 = 0.5 * (
-                    utils.corr(f0, f0, trajs, self.truncate, w)
-                    + utils.corr(f1, f1, trajs, self.truncate, w)
-                )
+                c0 = utils.c0_rt_adj_ct(trajs, self.lag, self.truncate, w)
             else:
-                c0 = utils.corr(f0, f0, trajs, self.truncate, w)
+                c0 = utils.c0_rt(trajs, self.truncate, w)
 
         evals, evecs = linalg.eigh(_sym(ct), c0)
         self.cov = c0
@@ -327,6 +318,8 @@ class LinearIVAC:
         if self.addones:
             trajs = _addones(trajs)
 
+        lags = np.arange(self.minlag, self.maxlag + 1, self.lagstep)
+
         if self.method in ["direct", "fft"]:
 
             if self.truncate is not False:
@@ -340,7 +333,6 @@ class LinearIVAC:
             if self.adjust:
                 raise ValueError("adjust is only supported with method 'conv'")
 
-            lags = np.arange(self.minlag, self.maxlag + 1, self.lagstep)
             c0 = covmat(trajs)
             ic = _icov(trajs, lags=lags, method=self.method)
 
@@ -353,33 +345,18 @@ class LinearIVAC:
                         "reweighting is only supported with mode 'truncate'"
                     )
 
-                lengths = np.array([len(traj) for traj in trajs])
-
-                f0 = utils.delay(0)
-                f1 = utils.integrate_all(
-                    self.minlag, self.maxlag, self.lagstep, lengths, mode=mode
-                )
-
-                fw = None
+                ic = utils.ic_all(trajs, lags, mode=mode)
                 if self.adjust:
-                    fw = utils.adjust_all(
-                        self.minlag, self.maxlag, self.lagstep, lengths
-                    )
-
-                ic = utils.corr(f0, f1, trajs)
-                c0 = utils.corr(f0, f0, trajs, weights=fw)
+                    c0 = utils.c0_all_adj_ic(trajs, lags)
+                else:
+                    c0 = utils.c0_all(trajs)
 
             else:
 
-                f0 = utils.delay(0)
-                f1 = utils.integrate(
-                    self.minlag, self.maxlag, self.lagstep, mode=mode
-                )
-
                 w = None
                 if self.reweight:
-                    ic = utils.corr(f0, f1, trajs, self.truncate)
-                    c0 = utils.corr(f0, f0, trajs, self.truncate)
+                    ic = utils.ic_trunc(trajs, lags, self.truncate, mode=mode)
+                    c0 = utils.c0_trunc(trajs, self.truncate)
 
                     evals, evecs = linalg.eig(ic.T, c0)
                     order = np.argsort(np.abs(evals))[::-1]
@@ -387,7 +364,7 @@ class LinearIVAC:
                     evecs = evecs[:, order]
                     w = np.real_if_close(evecs[:, 0])
 
-                    nlags = (self.maxlag - self.minlag) // self.lagstep + 1.0
+                    nlags = len(lags)
                     if not np.isclose(evals[0], nlags):
                         warnings.warn(
                             "dominant eigenvalue ({}) is not {}".format(
@@ -403,18 +380,11 @@ class LinearIVAC:
                     if not np.isrealobj(w):
                         warnings.warn("estimated weights are complex")
 
-                ic = utils.corr(f0, f1, trajs, self.truncate, w)
+                ic = utils.ic_rt(trajs, lags, self.truncate, w, mode=mode)
                 if self.adjust:
-                    c0 = utils.corr(
-                        f0,
-                        f0,
-                        trajs,
-                        weights=utils.adjust(
-                            self.minlag, self.maxlag, self.lagstep, w
-                        ),
-                    )
+                    c0 = utils.c0_rt_adj_ic(trajs, lags, self.truncate, w)
                 else:
-                    c0 = utils.corr(f0, f0, trajs, self.truncate, w)
+                    c0 = utils.c0_rt(trajs, self.truncate, w)
 
         else:
             raise ValueError(
