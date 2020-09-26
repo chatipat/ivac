@@ -68,6 +68,10 @@ class LinearVAC:
         corresponding to the eigenvalues.
     cov : (n_features, n_features) ndarray
         Covariance matrix of the fitted data.
+    trajs : list of (n_frames[i], n_features) ndarray
+        List of featurized trajectories used to solve VAC.
+    weights : list of (n_frames[i],) ndarray
+        Equilibrium weight of trajectories starting at each configuration.
 
     """
 
@@ -110,6 +114,8 @@ class LinearVAC:
         if self.addones:
             trajs = _addones(trajs)
 
+        weights = None
+
         if self.truncate is False:
 
             if self.reweight:
@@ -125,21 +131,24 @@ class LinearVAC:
 
         else:
 
-            w = None
             if self.reweight:
-                w = _vac_weights(trajs, self.lag, self.truncate)
+                weights = _vac_weights(trajs, self.lag, self.truncate)
 
-            ct = utils.ct_rt(trajs, self.lag, self.truncate, w)
+            ct = utils.ct_rt(trajs, self.lag, self.truncate, weights)
             if self.adjust:
-                c0 = utils.c0_rt_adj_ct(trajs, self.lag, self.truncate, w)
+                c0 = utils.c0_rt_adj_ct(
+                    trajs, self.lag, self.truncate, weights
+                )
             else:
-                c0 = utils.c0_rt(trajs, self.truncate, w)
+                c0 = utils.c0_rt(trajs, self.truncate, weights)
 
         evals, evecs = linalg.eigh(_sym(ct), c0)
         self.cov = c0
         self.evals = evals[::-1]
         self.evecs = evecs[:, ::-1]
         self.its = _vac_its(self.evals, self.lag)
+        self.trajs = trajs
+        self.weights = weights
 
     def transform(self, trajs):
         """Compute VAC eigenvectors on the input trajectories.
@@ -251,6 +260,10 @@ class LinearIVAC:
         corresponding to the eigenvalues.
     cov : (n_features, n_features) ndarray
         Covariance matrix of the fitted data.
+    trajs : list of (n_frames[i], n_features) ndarray
+        List of featurized trajectories used to solve IVAC.
+    weights : list of (n_frames[i],) ndarray
+        Equilibrium weight of trajectories starting at each configuration.
 
     """
 
@@ -302,6 +315,8 @@ class LinearIVAC:
         if self.addones:
             trajs = _addones(trajs)
 
+        weights = None
+
         lags = np.arange(self.minlag, self.maxlag + 1, self.lagstep)
 
         if self.method in ["direct", "fft"]:
@@ -337,15 +352,20 @@ class LinearIVAC:
 
             else:
 
-                w = None
                 if self.reweight:
-                    w = _ivac_weights(trajs, lags, self.truncate, mode=mode)
+                    weights = _ivac_weights(
+                        trajs, lags, self.truncate, mode=mode
+                    )
 
-                ic = utils.ic_rt(trajs, lags, self.truncate, w, mode=mode)
+                ic = utils.ic_rt(
+                    trajs, lags, self.truncate, weights, mode=mode
+                )
                 if self.adjust:
-                    c0 = utils.c0_rt_adj_ic(trajs, lags, self.truncate, w)
+                    c0 = utils.c0_rt_adj_ic(
+                        trajs, lags, self.truncate, weights
+                    )
                 else:
-                    c0 = utils.c0_rt(trajs, self.truncate, w)
+                    c0 = utils.c0_rt(trajs, self.truncate, weights)
 
         else:
             raise ValueError(
@@ -359,6 +379,8 @@ class LinearIVAC:
         self.its = _ivac_its(
             self.evals, self.minlag, self.maxlag, self.lagstep
         )
+        self.trajs = trajs
+        self.weights = weights
 
     def transform(self, trajs):
         """Compute IVAC eigenvectors on the input trajectories.
@@ -951,7 +973,7 @@ def covmat(u, v=None, weights=None, lag=0):
 
 
 def _vac_weights(trajs, lag, truncate):
-    """Estimate reweighting coefficients using VAC.
+    """Estimate weights for VAC.
 
     Parameters
     ----------
@@ -966,9 +988,8 @@ def _vac_weights(trajs, lag, truncate):
 
     Returns
     -------
-    (n_features,) ndarray
-        Coefficients for the projection of the stationary distribution
-        onto the input features.
+    list of (n_frames[i],) ndarray
+        Weight of trajectory starting at each configuration.
 
     """
     ct = utils.ct_trunc(trajs, lag, truncate)
@@ -979,11 +1000,16 @@ def _vac_weights(trajs, lag, truncate):
         raise ValueError(
             "{} stationary distributions found".format(w.shape[-1])
         )
-    return w
+    weights = []
+    for traj in trajs:
+        weight = traj @ w
+        weight[len(traj) - truncate :] = np.nan
+        weights.append(weight)
+    return weights
 
 
 def _ivac_weights(trajs, lags, truncate, mode="direct"):
-    """Estimate reweighting coefficients using IVAC.
+    """Estimate weights for IVAC.
 
     Parameters
     ----------
@@ -1004,9 +1030,8 @@ def _ivac_weights(trajs, lags, truncate, mode="direct"):
 
     Returns
     -------
-    (n_features,) ndarray
-        Coefficients for the projection of the stationary distribution
-        onto the input features.
+    list of (n_frames[i],) ndarray
+        Weight of trajectory starting at each configuration.
 
     """
     ic = utils.ic_trunc(trajs, lags, truncate, mode=mode)
@@ -1017,7 +1042,12 @@ def _ivac_weights(trajs, lags, truncate, mode="direct"):
         raise ValueError(
             "{} stationary distributions found".format(w.shape[-1])
         )
-    return w
+    weights = []
+    for traj in trajs:
+        weight = traj @ w
+        weight[len(traj) - truncate :] = np.nan
+        weights.append(weight)
+    return weights
 
 
 def _vac_its(evals, lag):

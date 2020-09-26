@@ -1,4 +1,5 @@
 import numpy as np
+import numba as nb
 from scipy import linalg, signal
 
 
@@ -40,9 +41,8 @@ def corr(
         List of featurized trajectories.
     maxlag : int
         Maximum lag time.
-    weights : callable or (n_features,) ndarray, optional
-        Function from features to weights or coefficients for the
-        stationary distribution expressed in terms of the features.
+    weights : list of (n_frames[i],) ndarray, optional
+        Weight of trajectory starting at each configuration.
 
     Returns
     -------
@@ -62,13 +62,10 @@ def corr(
                 numer += x.T @ y
                 denom += len(x)
     else:
-        if not callable(weights):
-            coeffs = np.asarray(weights)
-            weights = lambda traj: traj @ coeffs
-        for traj in trajs:
+        for traj, weight in zip(trajs, weights):
             length = len(traj) - maxlag
             if length > 0:
-                w = weights(traj[:length])
+                w = weight[:length]
                 x = func1(traj, length)
                 y = func2(traj, length)
                 numer += np.einsum("n,ni,nj", w, x, y)
@@ -121,21 +118,6 @@ def integrate_all(lags, weights, mode="direct"):
     return func
 
 
-def adjust_all(lags, weights):
-    """Create a function for IVAC's adjusted correlation matrix."""
-
-    def func(traj):
-        w = np.zeros(len(traj))
-        for lag, weight in zip(lags, weights):
-            length = len(traj) - lag
-            if length > 0:
-                w[:length] += weight
-                w[lag:] += weight
-        return w
-
-    return func
-
-
 def integrate(lags, mode="direct"):
     """Create a function that integrates a trajectory over lag times."""
 
@@ -165,25 +147,6 @@ def integrate(lags, mode="direct"):
     return func
 
 
-def adjust(lags, cutlag, wfunc):
-    """Create a function for IVAC's adjusted correlation matrix."""
-    if not callable(wfunc):
-        coeffs = np.asarray(wfunc)
-        wfunc = lambda traj: traj @ coeffs
-
-    def func(traj):
-        w = np.zeros(len(traj))
-        length = len(traj) - cutlag
-        if length > 0:
-            weights = wfunc(traj[:length])
-            for lag in lags:
-                w[:length] += weights
-                w[lag : length + lag] += weights
-        return w
-
-    return func
-
-
 # equilibrium IVAC
 
 
@@ -196,10 +159,7 @@ def ct_all(trajs, lag):
 
 
 def c0_all_adj_ct(trajs, lag):
-    lengths = np.array([len(traj) for traj in trajs])
-    samples = np.sum(np.maximum(lengths - lag, 0))
-    weight = 1.0 / samples
-    return corr(delay(0), delay(0), trajs, weights=adjust_all([lag], [weight]))
+    return c0_all_adj_ic(trajs, np.array([lag]))
 
 
 def ic_all(trajs, lags, mode="direct"):
@@ -214,8 +174,21 @@ def c0_all_adj_ic(trajs, lags):
     lags = np.asarray(lags)
     lengths = np.array([len(traj) for traj in trajs])
     samples = np.sum(np.maximum(lengths[None, :] - lags[:, None], 0), axis=-1)
-    weights = 1.0 / samples
-    return corr(delay(0), delay(0), trajs, weights=adjust_all(lags, weights))
+    wlags = 1.0 / samples
+    weights = [_adj_all(len(traj), lags, wlags) for traj in trajs]
+    return corr(delay(0), delay(0), trajs, weights=weights)
+
+
+@nb.njit
+def _adj_all(length, lags, wlags):
+    weight = np.zeros(length)
+    for i in range(len(lags)):
+        lag = lags[i]
+        wlag = wlags[i]
+        if length > lag:
+            weight[: length - lag] += wlag
+            weight[lag:] += wlag
+    return weight
 
 
 # nonequilibrium IVAC: weight estimation
@@ -236,21 +209,37 @@ def ic_trunc(trajs, lags, cutlag, mode="direct"):
 # nonequilibrium IVAC: reweighted matrices with truncated data
 
 
-def c0_rt(trajs, cutlag, w):
-    return corr(delay(0), delay(0), trajs, cutlag, w)
+def c0_rt(trajs, cutlag, weights):
+    return corr(delay(0), delay(0), trajs, cutlag, weights=weights)
 
 
-def ct_rt(trajs, lag, cutlag, w):
-    return corr(delay(0), delay(lag), trajs, cutlag, w)
+def ct_rt(trajs, lag, cutlag, weights):
+    return corr(delay(0), delay(lag), trajs, cutlag, weights=weights)
 
 
-def c0_rt_adj_ct(trajs, lag, cutlag, w):
-    return corr(delay(0), delay(0), trajs, weights=adjust([lag], cutlag, w))
+def c0_rt_adj_ct(trajs, lag, cutlag, weights):
+    return c0_rt_adj_ic(trajs, [lag], cutlag, weights)
 
 
-def ic_rt(trajs, lags, cutlag, w, mode="direct"):
-    return corr(delay(0), integrate(lags, mode=mode), trajs, cutlag, w)
+def ic_rt(trajs, lags, cutlag, weights, mode="direct"):
+    return corr(
+        delay(0), integrate(lags, mode=mode), trajs, cutlag, weights=weights
+    )
 
 
-def c0_rt_adj_ic(trajs, lags, cutlag, w):
-    return corr(delay(0), delay(0), trajs, weights=adjust(lags, cutlag, w))
+def c0_rt_adj_ic(trajs, lags, cutlag, weights):
+    lags = np.asarray(lags)
+    weights = [_adj_rt(weight, lags, cutlag) for weight in weights]
+    return corr(delay(0), delay(0), trajs, weights=weights)
+
+
+@nb.njit
+def _adj_rt(weight, lags, cutlag):
+    result = np.zeros(len(weight))
+    if len(weight) > cutlag:
+        w = weight[: len(weight) - cutlag]
+        for i in range(len(lags)):
+            lag = lags[i]
+            result[: len(weight) - cutlag] += w
+            result[lag : lag + len(weight) - cutlag] += w
+    return result

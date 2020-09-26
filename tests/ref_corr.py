@@ -94,70 +94,70 @@ def ic_trunc(trajs, lags, cutlag):
 # nonequilibrium IVAC: reweighted matrices with truncated data
 
 
-def c0_rt(trajs, cutlag, coeffs):
+def c0_rt(trajs, cutlag, weights):
     nfeatures = get_nfeatures(trajs)
     numer = np.zeros((nfeatures, nfeatures))
     denom = 0.0
-    for traj in trajs:
+    for traj, weight in zip(trajs, weights):
         x = traj[: len(traj) - cutlag]
-        w = x @ coeffs
+        w = weight[: len(traj) - cutlag]
         numer += np.einsum("n,ni,nj", w, x, x)
         denom += np.sum(w)
     return numer / denom
 
 
-def ct_rt(trajs, lag, cutlag, coeffs):
+def ct_rt(trajs, lag, cutlag, weights):
     nfeatures = get_nfeatures(trajs)
     numer = np.zeros((nfeatures, nfeatures))
     denom = 0.0
-    for traj in trajs:
+    for traj, weight in zip(trajs, weights):
         x = traj[: len(traj) - cutlag]
         y = traj[lag : len(traj) - cutlag + lag]
-        w = x @ coeffs
+        w = weight[: len(traj) - cutlag]
         numer += np.einsum("n,ni,nj", w, x, y)
         denom += np.sum(w)
     return numer / denom
 
 
-def c0_rt_adj_ct(trajs, lag, cutlag, coeffs):
+def c0_rt_adj_ct(trajs, lag, cutlag, weights):
     nfeatures = get_nfeatures(trajs)
     numer = np.zeros((nfeatures, nfeatures))
     denom = 0.0
-    for traj in trajs:
+    for traj, weight in zip(trajs, weights):
         x = traj[: len(traj) - cutlag]
         y = traj[lag : len(traj) - cutlag + lag]
-        w = x @ coeffs
+        w = weight[: len(traj) - cutlag]
         numer += np.einsum("n,ni,nj", w, x, x)
         numer += np.einsum("n,ni,nj", w, y, y)
         denom += 2.0 * np.sum(w)
     return numer / denom
 
 
-def ic_rt(trajs, lags, cutlag, coeffs):
+def ic_rt(trajs, lags, cutlag, weights):
     nfeatures = get_nfeatures(trajs)
     ic = np.zeros((nfeatures, nfeatures))
     for lag in lags:
-        ic += ct_rt(trajs, lag, cutlag, coeffs)
+        ic += ct_rt(trajs, lag, cutlag, weights)
     return ic
 
 
-def c0_rt_adj_ic(trajs, lags, cutlag, coeffs):
+def c0_rt_adj_ic(trajs, lags, cutlag, weights):
     nfeatures = get_nfeatures(trajs)
     c0 = np.zeros((nfeatures, nfeatures))
     for lag in lags:
-        c0 += c0_rt_adj_ct(trajs, lag, cutlag, coeffs)
+        c0 += c0_rt_adj_ct(trajs, lag, cutlag, weights)
     return c0 / len(lags)
 
 
 # nonequilibrium IVAC: reweighted matrices with all data
 
 
-def c0_ra(trajs, cutlag, coeffs):
+def c0_ra(trajs, cutlag, weights):
     nfeatures = get_nfeatures(trajs)
     numer = np.zeros((nfeatures, nfeatures))
     denom = 0.0
-    for traj in trajs:
-        w = traj[: len(traj) - cutlag] @ coeffs
+    for traj, weight in zip(trajs, weights):
+        w = weight[: len(traj) - cutlag]
         for shift in range(cutlag + 1):
             x = traj[shift : shift + len(traj) - cutlag]
             numer += np.einsum("n,ni,nj", w, x, x)
@@ -165,12 +165,12 @@ def c0_ra(trajs, cutlag, coeffs):
     return numer / denom
 
 
-def ct_ra(trajs, lag, cutlag, coeffs):
+def ct_ra(trajs, lag, cutlag, weights):
     nfeatures = get_nfeatures(trajs)
     numer = np.zeros((nfeatures, nfeatures))
     denom = 0.0
-    for traj in trajs:
-        w = traj[: len(traj) - cutlag] @ coeffs
+    for traj, weight in zip(trajs, weights):
+        w = weight[: len(traj) - cutlag]
         for shift in range(cutlag - lag + 1):
             x = traj[shift : shift + len(traj) - cutlag]
             y = traj[shift + lag : shift + len(traj) - cutlag + lag]
@@ -179,12 +179,12 @@ def ct_ra(trajs, lag, cutlag, coeffs):
     return numer / denom
 
 
-def c0_ra_adj_ct(trajs, lag, cutlag, coeffs):
+def c0_ra_adj_ct(trajs, lag, cutlag, weights):
     nfeatures = get_nfeatures(trajs)
     numer = np.zeros((nfeatures, nfeatures))
     denom = 0.0
-    for traj in trajs:
-        w = traj[: len(traj) - cutlag] @ coeffs
+    for traj, weight in zip(trajs, weights):
+        w = weight[: len(traj) - cutlag]
         for shift in range(cutlag - lag + 1):
             x = traj[shift : shift + len(traj) - cutlag]
             y = traj[shift + lag : shift + len(traj) - cutlag + lag]
@@ -194,17 +194,17 @@ def c0_ra_adj_ct(trajs, lag, cutlag, coeffs):
     return numer / denom
 
 
-def ic_ra(trajs, lags, cutlag, coeffs):
+def ic_ra(trajs, lags, cutlag, weights):
     nfeatures = get_nfeatures(trajs)
     ic = np.zeros((nfeatures, nfeatures))
     for lag in lags:
-        ic += ct_ra(trajs, lag, cutlag, coeffs)
+        ic += ct_ra(trajs, lag, cutlag, weights)
     return ic
 
 
-def c0_ra_adj_ic(trajs, lags, cutlag, coeffs):
+def c0_ra_adj_ic(trajs, lags, cutlag, weights):
     nfeatures = get_nfeatures(trajs)
     c0 = np.zeros((nfeatures, nfeatures))
     for lag in lags:
-        c0 += c0_ra_adj_ct(trajs, lags, cutlag, coeffs)
+        c0 += c0_ra_adj_ct(trajs, lags, cutlag, weights)
     return c0 / len(lags)
