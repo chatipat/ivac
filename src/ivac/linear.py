@@ -127,23 +127,7 @@ class LinearVAC:
 
             w = None
             if self.reweight:
-                ct = utils.ct_trunc(trajs, self.lag, self.truncate)
-                c0 = utils.c0_trunc(trajs, self.truncate)
-
-                evals, evecs = linalg.eig(ct.T, c0)
-                order = np.argsort(np.abs(evals))[::-1]
-                evals = evals[order]
-                evecs = evecs[:, order]
-                w = np.real_if_close(evecs[:, 0])
-
-                if not np.isclose(evals[0], 1.0):
-                    warnings.warn("dominant eigenvalue is not 1")
-                if not np.all(np.abs(evals[1:]) < 1.0):
-                    warnings.warn(
-                        "multiple eigenvalues have magnitudes above 1"
-                    )
-                if not np.isrealobj(w):
-                    warnings.warn("estimated weights are complex")
+                w = _vac_weights(trajs, self.lag, self.truncate)
 
             ct = utils.ct_rt(trajs, self.lag, self.truncate, w)
             if self.adjust:
@@ -355,30 +339,7 @@ class LinearIVAC:
 
                 w = None
                 if self.reweight:
-                    ic = utils.ic_trunc(trajs, lags, self.truncate, mode=mode)
-                    c0 = utils.c0_trunc(trajs, self.truncate)
-
-                    evals, evecs = linalg.eig(ic.T, c0)
-                    order = np.argsort(np.abs(evals))[::-1]
-                    evals = evals[order]
-                    evecs = evecs[:, order]
-                    w = np.real_if_close(evecs[:, 0])
-
-                    nlags = len(lags)
-                    if not np.isclose(evals[0], nlags):
-                        warnings.warn(
-                            "dominant eigenvalue ({}) is not {}".format(
-                                evals[0], nlags
-                            )
-                        )
-                    if not np.all(np.abs(evals[1:]) < nlags):
-                        warnings.warn(
-                            "multiple eigenvalues have magnitudes above {}".format(
-                                nlags
-                            )
-                        )
-                    if not np.isrealobj(w):
-                        warnings.warn("estimated weights are complex")
+                    w = _ivac_weights(trajs, lags, self.truncate, mode=mode)
 
                 ic = utils.ic_rt(trajs, lags, self.truncate, w, mode=mode)
                 if self.adjust:
@@ -987,6 +948,76 @@ def covmat(u, v=None, weights=None, lag=0):
             cov += np.einsum("n,ni,nj->ij", w, x, y)
             count += np.sum(w)
     return cov / count
+
+
+def _vac_weights(trajs, lag, truncate):
+    """Estimate reweighting coefficients using VAC.
+
+    Parameters
+    ----------
+    trajs : list of (n_frames[i], n_features) ndarray
+        List of featurized trajectories.
+        The features must be able to represent constant features.
+    lag : int
+        VAC lag time, in units of frames.
+    truncate : int
+        Number of frames to drop from the end of each trajectory.
+        This must be greater than or equal to the VAC lag time.
+
+    Returns
+    -------
+    (n_features,) ndarray
+        Coefficients for the projection of the stationary distribution
+        onto the input features.
+
+    """
+    ct = utils.ct_trunc(trajs, lag, truncate)
+    c0 = utils.c0_trunc(trajs, truncate)
+
+    w = np.squeeze(linalg.null_space((ct - c0).T))
+    if w.ndim != 1:
+        raise ValueError(
+            "{} stationary distributions found".format(w.shape[-1])
+        )
+    return w
+
+
+def _ivac_weights(trajs, lags, truncate, mode="direct"):
+    """Estimate reweighting coefficients using IVAC.
+
+    Parameters
+    ----------
+    trajs : list of (n_frames[i], n_features) ndarray
+        List of featurized trajectories.
+        The features must be able to represent constant features.
+    lags : array-like of int
+        Lag times at which to evaluate IVAC, in units of frames.
+    truncate : int
+        Number of frames to drop from the end of each trajectory.
+        This must be greater than or equal to the maximum IVAC lag time.
+    mode : string, optional
+        Method to use for calculating the integrated correlation matrix.
+        Currently, 'direct' and 'fft' are supported.
+        The default method, 'direct', is usually faster for smaller
+        numbers of lag times. The speed of method 'fft' is mostly
+        independent of the number of lag times used.
+
+    Returns
+    -------
+    (n_features,) ndarray
+        Coefficients for the projection of the stationary distribution
+        onto the input features.
+
+    """
+    ic = utils.ic_trunc(trajs, lags, truncate, mode=mode)
+    c0 = utils.c0_trunc(trajs, truncate)
+
+    w = np.squeeze(linalg.null_space((ic / len(lags) - c0).T))
+    if w.ndim != 1:
+        raise ValueError(
+            "{} stationary distributions found".format(w.shape[-1])
+        )
+    return w
 
 
 def _vac_its(evals, lag):
