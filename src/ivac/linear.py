@@ -346,7 +346,7 @@ class LinearIVAC:
 
                 ic = utils.ic_all(trajs, lags, mode=mode)
                 if self.adjust:
-                    c0 = utils.c0_all_adj_ic(trajs, lags)
+                    c0 = utils.c0_all_adj_ic(trajs, lags, mode=mode)
                 else:
                     c0 = utils.c0_all(trajs)
 
@@ -362,7 +362,7 @@ class LinearIVAC:
                 )
                 if self.adjust:
                     c0 = utils.c0_rt_adj_ic(
-                        trajs, lags, self.truncate, weights
+                        trajs, lags, self.truncate, weights, mode=mode
                     )
                 else:
                     c0 = utils.c0_rt(trajs, self.truncate, weights)

@@ -68,7 +68,8 @@ def corr(
                 w = weight[:length]
                 x = func1(traj, length)
                 y = func2(traj, length)
-                numer += np.einsum("n,ni,nj", w, x, y)
+                xw = x * w[:, None]
+                numer += xw.T @ y
                 denom += np.sum(w)
     return numer / denom
 
@@ -170,7 +171,7 @@ def ic_all(trajs, lags, mode="direct"):
     return corr(delay(0), integrate_all(lags, weights, mode=mode), trajs)
 
 
-def c0_all_adj_ic(trajs, lags):
+def c0_all_adj_ic(trajs, lags, mode="direct"):
     lags = np.asarray(lags)
     lengths = np.array([len(traj) for traj in trajs])
     samples = np.sum(np.maximum(lengths[None, :] - lags[:, None], 0), axis=-1)
@@ -180,14 +181,24 @@ def c0_all_adj_ic(trajs, lags):
 
 
 @nb.njit
-def _adj_all(length, lags, wlags):
-    weight = np.zeros(length)
+def _adj_all(wlen, lags, wlags):
+
+    # create window
+    minlag = min(lags)
+    maxlag = max(lags)
+    nlags = maxlag - minlag + 1
+    window = np.zeros(nlags)
     for i in range(len(lags)):
-        lag = lags[i]
-        wlag = wlags[i]
-        if length > lag:
-            weight[: length - lag] += wlag
-            weight[lag:] += wlag
+        window[lags[i] - minlag] = wlags[i]
+
+    # weights form right triangles starting from each end
+    a = 0.0
+    weight = np.zeros(wlen)
+    for i in range(minlag, wlen):
+        if i <= maxlag:
+            a += window[i - minlag]
+        weight[i] += a
+        weight[wlen - 1 - i] += a
     return weight
 
 
@@ -227,19 +238,46 @@ def ic_rt(trajs, lags, cutlag, weights, mode="direct"):
     )
 
 
-def c0_rt_adj_ic(trajs, lags, cutlag, weights):
+def c0_rt_adj_ic(trajs, lags, cutlag, weights, mode="direct"):
     lags = np.asarray(lags)
-    weights = [_adj_rt(weight, lags, cutlag) for weight in weights]
+    if mode == "direct":
+        weights = [_adj_rt_direct(weight, lags, cutlag) for weight in weights]
+    elif mode == "fft":
+        weights = [_adj_rt_fft(weight, lags, cutlag) for weight in weights]
+    else:
+        raise ValueError("mode must be 'direct' or 'fft'")
     return corr(delay(0), delay(0), trajs, weights=weights)
 
 
 @nb.njit
-def _adj_rt(weight, lags, cutlag):
+def _adj_rt_direct(weight, lags, cutlag):
     result = np.zeros(len(weight))
-    if len(weight) > cutlag:
-        w = weight[: len(weight) - cutlag]
-        for i in range(len(lags)):
-            lag = lags[i]
-            result[: len(weight) - cutlag] += w
-            result[lag : lag + len(weight) - cutlag] += w
+    length = len(weight) - cutlag
+    if length > 0:
+        nlags = len(lags)
+        for i in range(length):
+            result[i] += weight[i] * nlags
+        for n in range(nlags):
+            lag = lags[n]
+            for i in range(length):
+                result[lag + i] += weight[i]
+    return result
+
+
+def _adj_rt_fft(weight, lags, cutlag):
+    result = np.zeros(len(weight))
+    length = len(weight) - cutlag
+    if length > 0:
+
+        # create window
+        minlag = min(lags)
+        maxlag = max(lags)
+        window = np.zeros(maxlag - minlag + 1)
+        window[lags - minlag] = 1.0
+
+        # initial and integrated points
+        weight = weight[:length]
+        result[:length] += weight * len(lags)
+        result[minlag : length + maxlag] += signal.fftconvolve(weight, window)
+
     return result

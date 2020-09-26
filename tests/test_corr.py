@@ -82,6 +82,10 @@ def check_corr_all(trajs, vac_lags, ivac_lags):
             impl.c0_all_adj_ic(trajs, lags),
             ref.c0_all_adj_ic(trajs, lags),
         )
+        assert np.allclose(
+            impl.c0_all_adj_ic(trajs, lags, mode="fft"),
+            ref.c0_all_adj_ic(trajs, lags),
+        )
 
 
 def check_corr_trunc(trajs, cutlag, vac_lags, ivac_lags):
@@ -174,5 +178,9 @@ def check_corr_rt(trajs, cutlag, weights, vac_lags, ivac_lags):
         )
         assert np.allclose(
             impl.c0_rt_adj_ic(trajs, lags, cutlag, weights),
+            ref.c0_rt_adj_ic(trajs, lags, cutlag, weights),
+        )
+        assert np.allclose(
+            impl.c0_rt_adj_ic(trajs, lags, cutlag, weights, mode="fft"),
             ref.c0_rt_adj_ic(trajs, lags, cutlag, weights),
         )
