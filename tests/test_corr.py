@@ -16,11 +16,11 @@ def test_corr():
 
     vac_lags1 = [1, 2, 5, 10, 20]
     ivac_lags1 = [np.arange(0, 20, 2), np.arange(5, 20), np.arange(10, 20)]
-    weights1 = _ivac_weights(trajs, np.arange(0, 21), 20, mode="fft")
+    weights1 = _ivac_weights(trajs, np.arange(0, 21), 20, method="fft")
 
     vac_lags2 = [1, 2, 5, 10]
     ivac_lags2 = [np.arange(0, 5), np.arange(0, 10), np.arange(5, 10)]
-    weights2 = _ivac_weights(trajs, np.arange(0, 11), 10, mode="direct")
+    weights2 = _ivac_weights(trajs, np.arange(0, 11), 10, method="direct")
 
     check_corr_all(trajs, vac_lags1, ivac_lags1 + ivac_lags2)
 
@@ -194,7 +194,7 @@ def check_corr_batch(trajs):
     params = [np.arange(0, 11, 2) + i for i in range(1, 11)]
     lags = np.unique(np.concatenate(params))
     cutlag = max(lags)
-    weights = _ivac_weights(trajs, lags, cutlag, mode="fft")
+    weights = _ivac_weights(trajs, lags, cutlag, method="fft")
 
     # equilibrium IVAC
 

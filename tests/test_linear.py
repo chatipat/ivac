@@ -38,7 +38,7 @@ def test_vac():
     assert allclose_trajs_sign(test2.transform(trajs), evecs)
 
     # evals
-    mat = ivac.linear._sym(ivac.covmat(evecs, lag=lag))
+    mat = ivac.linear._sym(ivac.utils.ct_all(evecs, lag))
     assert np.allclose(np.diag(mat), test.evals[:nevecs])
     assert np.allclose(mat, np.diag(test.evals[:nevecs]))
 
@@ -126,7 +126,7 @@ def test_ivac():
 
     # evals
     mat = ivac.linear._sym(
-        ivac.linear._icov(evecs, lags=np.arange(minlag, maxlag + 1))
+        ivac.utils.ic_all(evecs, lags=np.arange(minlag, maxlag + 1))
     )
     assert np.allclose(np.diag(mat), test.evals[:nevecs])
     assert np.allclose(mat, np.diag(test.evals[:nevecs]))
@@ -151,22 +151,6 @@ def test_ivac():
     test2 = ivac.LinearIVAC(minlag, maxlag, nevecs=nevecs, method="fft")
     test2.fit(trajs)
     assert test2.method == "fft"
-    assert np.allclose(test2.evals[:nevecs], test.evals[:nevecs])
-    assert np.allclose(test2.its[:nevecs], test.its[:nevecs])
-    assert allclose_trajs_sign(test2.transform(trajs), evecs)
-
-    # conv gives the same result
-    test2 = ivac.LinearIVAC(minlag, maxlag, nevecs=nevecs, method="conv")
-    test2.fit(trajs)
-    assert test2.method == "conv"
-    assert np.allclose(test2.evals[:nevecs], test.evals[:nevecs])
-    assert np.allclose(test2.its[:nevecs], test.its[:nevecs])
-    assert allclose_trajs_sign(test2.transform(trajs), evecs)
-
-    # fftconv gives the same result
-    test2 = ivac.LinearIVAC(minlag, maxlag, nevecs=nevecs, method="fftconv")
-    test2.fit(trajs)
-    assert test2.method == "fftconv"
     assert np.allclose(test2.evals[:nevecs], test.evals[:nevecs])
     assert np.allclose(test2.its[:nevecs], test.its[:nevecs])
     assert allclose_trajs_sign(test2.transform(trajs), evecs)
@@ -205,7 +189,7 @@ def test_vac_scan():
         trajs = make_data([1000, 1500, 2000], 0.1, 10)
         if addones:
             trajs = [traj[:, 1:] for traj in trajs]
-        for method in ["direct", "fft"]:
+        for method in ["direct", "fft-all"]:
             scan = ivac.LinearVACScan(
                 lags, nevecs=nevecs, addones=addones, method=method
             )
@@ -239,7 +223,7 @@ def test_ivac_scan():
         trajs = make_data([1000, 1500, 2000], 0.1, 10)
         if addones:
             trajs = [traj[:, 1:] for traj in trajs]
-        for method in ["direct", "fft"]:
+        for method in ["direct", "fft", "fft-all"]:
             for lagstep in [1, 2]:
                 scan = ivac.LinearIVACScan(
                     lags,

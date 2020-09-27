@@ -233,13 +233,15 @@ class LinearIVAC:
         unless reweight is True.
     method : str, optional
         Method to compute the integrated covariance matrix.
-        Currently, 'direct', 'conv', 'fftconv', and 'fft' are supported.
-        Method 'direct' sums the time lagged covariance matrices.
-        Method 'conv' integrates features over lag times before
-        computing the covariance matrices.
-        Method 'fftconv' does the same as 'conv', but uses a FFT.
-        Method 'fft' uses a FFT to compute the time lagged correlation
-        for each pair of basis functions.
+        Currently, 'direct', 'fft' are supported.
+        Both 'direct' and 'fft' integrate features over lag times before
+        computing the correlation matrix.
+        Method 'direct' does so by summing the time-lagged features.
+        Its runtime increases linearly with the number of lag times.
+        Method 'fft' does so by performing an FFT convolution.
+        It takes around the same amount of time to run regardless
+        of the number of lag times, and is faster than 'direct' when
+        there is more than around 100 lag times.
 
     Attributes
     ----------
@@ -277,7 +279,7 @@ class LinearIVAC:
         reweight=False,
         adjust=False,
         truncate=None,
-        method="conv",
+        method="direct",
     ):
         if minlag > maxlag:
             raise ValueError("minlag must be less than or equal to maxlag")
@@ -319,58 +321,38 @@ class LinearIVAC:
 
         lags = np.arange(self.minlag, self.maxlag + 1, self.lagstep)
 
-        if self.method in ["direct", "fft"]:
+        if self.method not in ["direct", "fft"]:
+            raise ValueError("method must be 'direct', or 'fft'")
 
-            if self.truncate is not False:
-                raise ValueError(
-                    "truncate is only supported with method 'conv'"
-                )
+        if self.truncate is False:
+
             if self.reweight:
                 raise ValueError(
-                    "reweight is only supported with method 'conv'"
+                    "reweighting is only supported with mode 'truncate'"
                 )
+
+            ic = utils.ic_all(trajs, lags, mode=self.method)
             if self.adjust:
-                raise ValueError("adjust is only supported with method 'conv'")
-
-            c0 = covmat(trajs)
-            ic = _icov(trajs, lags=lags, method=self.method)
-
-        elif self.method in ["conv", "fftconv"]:
-            mode = {"conv": "direct", "fftconv": "fft"}[self.method]
-
-            if self.truncate is False:
-                if self.reweight:
-                    raise ValueError(
-                        "reweighting is only supported with mode 'truncate'"
-                    )
-
-                ic = utils.ic_all(trajs, lags, mode=mode)
-                if self.adjust:
-                    c0 = utils.c0_all_adj_ic(trajs, lags, mode=mode)
-                else:
-                    c0 = utils.c0_all(trajs)
-
+                c0 = utils.c0_all_adj_ic(trajs, lags, mode=self.method)
             else:
-
-                if self.reweight:
-                    weights = _ivac_weights(
-                        trajs, lags, self.truncate, mode=mode
-                    )
-
-                ic = utils.ic_rt(
-                    trajs, lags, self.truncate, weights, mode=mode
-                )
-                if self.adjust:
-                    c0 = utils.c0_rt_adj_ic(
-                        trajs, lags, self.truncate, weights, mode=mode
-                    )
-                else:
-                    c0 = utils.c0_rt(trajs, self.truncate, weights)
+                c0 = utils.c0_all(trajs)
 
         else:
-            raise ValueError(
-                "method must be 'direct', 'fft', 'fftconv', or 'conv'"
+
+            if self.reweight:
+                weights = _ivac_weights(
+                    trajs, lags, self.truncate, mode=self.method
+                )
+
+            ic = utils.ic_rt(
+                trajs, lags, self.truncate, weights, mode=self.method
             )
+            if self.adjust:
+                c0 = utils.c0_rt_adj_ic(
+                    trajs, lags, self.truncate, weights, mode=self.method
+                )
+            else:
+                c0 = utils.c0_rt(trajs, self.truncate, weights)
 
         evals, evecs = linalg.eigh(_sym(ic), c0)
         self.cov = c0
@@ -441,9 +423,11 @@ class LinearVACScan:
         Method used to compute the time lagged covariance matrices.
         Currently supported methods are 'direct',
         which computes each time lagged covariance matrix separately,
-        and 'fft',
-        which uses a FFT to compute the time lagged correlations,
-        between each pair of features.
+        and 'fft-all', which computes all time-lagged correlation
+        matrices at once by convolving each pair of features.
+        The runtime of 'fft-all' is almost independent of the number
+        of lag times, and is faster then 'direct' when scanning a
+        large number of lag times.
 
     Attributes
     ----------
@@ -474,7 +458,7 @@ class LinearVACScan:
         """
         if self.addones:
             trajs = _addones(trajs)
-        self.cov = covmat(trajs)
+        self.cov = utils.c0_all(trajs)
         nlags = len(self.lags)
         nfeatures = len(self.cov)
         nevecs = self.nevecs
@@ -487,27 +471,22 @@ class LinearVACScan:
 
         if self.method == "direct":
             for n, lag in enumerate(self.lags):
-                ct = covmat(trajs, lag=lag)
+                ct = utils.ct_all(trajs, lag)
                 evals, evecs = linalg.eigh(_sym(ct), self.cov)
                 self.evals[n] = evals[::-1][:nevecs]
                 self.evecs[n] = evecs[:, ::-1][:, :nevecs]
                 self.its[n] = _vac_its(self.evals[n], lag)
-        elif self.method == "fft":
-            cts = np.zeros((nlags, nfeatures, nfeatures))
-            for i in range(nfeatures):
-                for j in range(i, nfeatures):
-                    corr1, corr2 = _fftcorr(trajs, self.lags, i, j)
-                    cts[:, i, j] += corr1
-                    cts[:, j, i] += corr2
-                    if i == j:
-                        cts[:, i, j] *= 0.5
+
+        elif self.method == "fft-all":
+            cts = utils.batch_ct_all(trajs, self.lags)
             for n, (ct, lag) in enumerate(zip(cts, self.lags)):
                 evals, evecs = linalg.eigh(_sym(ct), self.cov)
                 self.evals[n] = evals[::-1][:nevecs]
                 self.evecs[n] = evecs[:, ::-1][:, :nevecs]
                 self.its[n] = _vac_its(self.evals[n], lag)
+
         else:
-            raise ValueError("method must be 'direct' or 'fft'")
+            raise ValueError("method must be 'direct' or 'fft-all'")
 
     def __getitem__(self, lag):
         """Get a fitted LinearVAC with the specified lag time.
@@ -564,12 +543,23 @@ class LinearIVACScan:
         If True, add a feature of ones before solving VAC.
         This increases n_features by 1.
     method : str, optional
-        Method used to compute the integrated covariance matrices.
-        Currently supported methods are 'direct',
-        which sums together time lagged covariance matrices,
-        and 'fft',
-        which uses a FFT to compute the time lagged correlations
-        between each pair of features.
+        Method to compute the integrated covariance matrix.
+        Currently, 'direct', 'fft', and 'fft-all' are supported.
+        Both 'direct' and 'fft' integrate features over lag times before
+        computing the correlation matrix. They scale linearly with
+        the number of parameter sets.
+        Method 'direct' does so by summing the time-lagged features.
+        Its runtime increases linearly with the number of lag times.
+        Method 'fft' does so by performing an FFT convolution.
+        It takes around the same amount of time to run regardless
+        of the number of lag times, and is faster than 'direct' when
+        there is more than around 100 lag times.
+        Method 'fft-all' computes all time-lagged correlation matrices
+        at once by convolving each pair of features, before summing
+        up those correlation matrices to obtain integrated correlation
+        matrices. It is the slowest of these methods for calculating
+        a few sets of parameters, but is almost independent of the
+        number of lag times or parameter sets.
 
     Attributes
     ----------
@@ -614,47 +604,35 @@ class LinearIVACScan:
         """
         if self.addones:
             trajs = _addones(trajs)
-        self.cov = covmat(trajs)
+        self.cov = utils.c0_all(trajs)
         nlags = len(self.lags)
         nfeatures = len(self.cov)
         nevecs = self.nevecs
         if nevecs is None:
             nevecs = nfeatures
 
+        params = []
+        for start, end in zip(self.lags[:-1], self.lags[1:]):
+            params.append(
+                np.arange(start + self.lagstep, end + 1, self.lagstep)
+            )
+
+        if self.method in ["direct", "fft"]:
+            ics = np.zeros((nlags - 1, nfeatures, nfeatures))
+            for n, param in enumerate(params):
+                ics[n] = utils.ic_all(trajs, param, mode=self.method)
+        elif self.method == "fft-all":
+            ics = utils.batch_ic_all(trajs, params)
+
+        else:
+            raise ValueError("method must be 'direct', 'fft', or 'fft-all")
+
         self.evals = np.full((nlags, nlags, nevecs), np.nan)
         self.evecs = np.full((nlags, nlags, nfeatures, nevecs), np.nan)
         self.its = np.full((nlags, nlags, nevecs), np.nan)
 
-        ics = np.zeros((nlags - 1, nfeatures, nfeatures))
-        if self.method == "direct":
-            for n in range(nlags - 1):
-                lags = np.arange(
-                    self.lags[n] + self.lagstep,
-                    self.lags[n + 1] + 1,
-                    self.lagstep,
-                )
-                ics[n] = _icov(trajs, lags=lags)
-        elif self.method == "fft":
-            lags = np.arange(
-                self.lags[0] + self.lagstep,
-                self.lags[-1] + 1,
-                self.lagstep,
-            )
-            for i in range(nfeatures):
-                for j in range(i, nfeatures):
-                    corr1, corr2 = _fftcorr(trajs, lags, i, j)
-                    for n in range(nlags - 1):
-                        start = (self.lags[n] - self.lags[0]) // self.lagstep
-                        end = (self.lags[n + 1] - self.lags[0]) // self.lagstep
-                        ics[n, i, j] += np.sum(corr1[start:end])
-                        ics[n, j, i] += np.sum(corr2[start:end])
-                        if i == j:
-                            ics[n, i, j] *= 0.5
-        else:
-            raise ValueError("method must be 'direct' or 'fft'")
-
         for i in range(nlags):
-            ic = covmat(trajs, lag=self.lags[i])
+            ic = utils.ct_all(trajs, self.lags[i])
             evals, evecs = linalg.eigh(_sym(ic), self.cov)
             self.evals[i, i] = evals[::-1][:nevecs]
             self.evecs[i, i] = evecs[:, ::-1][:, :nevecs]
@@ -1008,7 +986,7 @@ def _vac_weights(trajs, lag, truncate):
     return weights
 
 
-def _ivac_weights(trajs, lags, truncate, mode="direct"):
+def _ivac_weights(trajs, lags, truncate, method="direct"):
     """Estimate weights for IVAC.
 
     Parameters
@@ -1021,7 +999,7 @@ def _ivac_weights(trajs, lags, truncate, mode="direct"):
     truncate : int
         Number of frames to drop from the end of each trajectory.
         This must be greater than or equal to the maximum IVAC lag time.
-    mode : string, optional
+    method : string, optional
         Method to use for calculating the integrated correlation matrix.
         Currently, 'direct' and 'fft' are supported.
         The default method, 'direct', is usually faster for smaller
@@ -1034,7 +1012,7 @@ def _ivac_weights(trajs, lags, truncate, mode="direct"):
         Weight of trajectory starting at each configuration.
 
     """
-    ic = utils.ic_trunc(trajs, lags, truncate, mode=mode)
+    ic = utils.ic_trunc(trajs, lags, truncate, mode=method)
     c0 = utils.c0_trunc(trajs, truncate)
 
     w = np.squeeze(linalg.null_space((ic / len(lags) - c0).T))
@@ -1171,97 +1149,6 @@ def _addones(trajs):
         ones = np.ones((len(traj), 1))
         result.append(np.concatenate([ones, traj], axis=-1))
     return result
-
-
-def _icov(trajs, lags, weights=None, method="direct"):
-    r"""Compute the integrated covariance matrix over given lag times.
-
-    For a single trajectory
-    :math:`\vec{x}_0, \vec{x}_1, \ldots, \vec{x}_{T-1}`,
-    this function calculates
-    :math:`\mathbf{I} = \sum_t \mathbf{C}(t)`
-    where the time lagged covariance matrix :math:`\mathbf{C}(t)`
-    is given by
-
-    .. math::
-
-        \mathbf{C}(t) =
-            \frac{1}{T-t} \sum_{n=0}^{T-t-1} \vec{x}_n \vec{x}_{n+t}^T
-
-    The method 'direct' performs this naive sum.
-    When there is a large number of lag times,
-    method 'fft' might be faster.
-
-    Parameters
-    ----------
-    trajs : list of (n_frames[i], n_features) array-like
-        List of featurized trajectories.
-    lags : (n_lags,) array-like of int
-        Lag times to sum over.
-    method : str, optional
-        Method to compute the integrated covariance matrix.
-        Currently, 'direct' and 'fft' are supported.
-
-    Returns
-    -------
-    (n_features, n_features) ndarray
-        Integrated covariance matrix.
-
-    """
-    nfeatures = np.shape(trajs[0])[-1]
-    ic = np.zeros((nfeatures, nfeatures))
-    if method == "direct":
-        for lag in lags:
-            ic += covmat(trajs, weights=weights, lag=lag)
-    elif method == "fft":
-        for i in range(nfeatures):
-            for j in range(i, nfeatures):
-                corr1, corr2 = _fftcorr(trajs, lags, i, j)
-                ic[i, j] += np.sum(corr1)
-                ic[j, i] += np.sum(corr2)
-                if i == j:
-                    ic[i, j] *= 0.5
-    else:
-        raise ValueError("method must be 'direct' or 'fft'")
-    return ic
-
-
-def _fftcorr(trajs, lags, i, j):
-    r"""Compute the correlation between time lagged features using FFT.
-
-    For features :math:`\phi_i` and :math:`\phi_j`, this function
-    computes two time lagged correlations for each lag time :math:`t`:
-
-    .. math::
-
-        \mathrm{corr}_1 = \mathbf{E}[\phi_i(x_0) \phi_j(x_t)]
-
-        \mathrm{corr}_2 = \mathbf{E}[\phi_i(x_t) \phi_j(x_0)]
-
-    Parameters
-    ----------
-    trajs : list of (n_frames[k], n_features) ndarray
-        List of featurized trajectories.
-    lags : (n_lags,) ndarray of int
-        Lag times for which to compute the time lagged correlations.
-    i, j : int
-        Indices of the features.
-
-    Returns
-    -------
-    corr1, corr2 : (n_lags,) ndarray
-        Time lagged correlations between specified features.
-
-    """
-    corr1 = np.zeros(len(lags))
-    corr2 = np.zeros(len(lags))
-    count = np.zeros(len(lags))
-    for traj in trajs:
-        corr = signal.correlate(traj[:, i], traj[:, j], method="fft")
-        corr1 += corr[len(traj) - 1 - lags]
-        corr2 += corr[len(traj) - 1 + lags]
-        count += len(traj) - lags
-    return corr1 / count, corr2 / count
 
 
 def _sym(mat):
