@@ -1,8 +1,12 @@
 import numpy as np
 import numba as nb
 import warnings
-from scipy import linalg, optimize, signal
+from scipy import linalg, optimize
 from . import utils
+
+
+# -----------------------------------------------------------------------------
+# linear VAC and IVAC
 
 
 class LinearVAC:
@@ -110,9 +114,7 @@ class LinearVAC:
             List of featurized trajectories.
 
         """
-        trajs = utils.preprocess_trajs(trajs)
-        if self.addones:
-            trajs = _addones(trajs)
+        trajs = utils.preprocess_trajs(trajs, addones=self.addones)
 
         weights = None
 
@@ -142,13 +144,10 @@ class LinearVAC:
             else:
                 c0 = utils.c0_rt(trajs, self.truncate, weights)
 
-        evals, evecs = linalg.eigh(_sym(ct), c0)
-        self.cov = c0
-        self.evals = evals[::-1]
-        self.evecs = evecs[:, ::-1]
-        self.its = _vac_its(self.evals, self.lag)
-        self.trajs = trajs
-        self.weights = weights
+        evals, evecs = utils.symeig(ct, c0)
+        its = _vac_its(evals, self.lag)
+
+        self._set_fit_data(c0, evals, evecs, its, trajs, weights)
 
     def transform(self, trajs):
         """Compute VAC eigenvectors on the input trajectories.
@@ -167,13 +166,17 @@ class LinearVAC:
             VAC eigenvectors at each frame of the input trajectories.
 
         """
-        if self.addones:
-            trajs = _addones(trajs)
-        result = []
-        for traj in trajs:
-            traj = np.asarray(traj, dtype=np.float64)
-            result.append(traj @ self.evecs[:, : self.nevecs])
-        return result
+        trajs = utils.preprocess_trajs(trajs, addones=self.addones)
+        return utils.trajs_matmul(trajs, self.evecs[:, : self.nevecs])
+
+    def _set_fit_data(self, cov, evals, evecs, its, trajs, weights):
+        """Set fields computed by the fit method."""
+        self.cov = cov
+        self.evals = evals
+        self.evecs = evecs
+        self.its = its
+        self.trajs = trajs
+        self.weights = weights
 
 
 class LinearIVAC:
@@ -313,9 +316,7 @@ class LinearIVAC:
             List of featurized trajectories.
 
         """
-        trajs = utils.preprocess_trajs(trajs)
-        if self.addones:
-            trajs = _addones(trajs)
+        trajs = utils.preprocess_trajs(trajs, addones=self.addones)
 
         weights = None
 
@@ -354,15 +355,10 @@ class LinearIVAC:
             else:
                 c0 = utils.c0_rt(trajs, self.truncate, weights)
 
-        evals, evecs = linalg.eigh(_sym(ic), c0)
-        self.cov = c0
-        self.evals = evals[::-1]
-        self.evecs = evecs[:, ::-1]
-        self.its = _ivac_its(
-            self.evals, self.minlag, self.maxlag, self.lagstep
-        )
-        self.trajs = trajs
-        self.weights = weights
+        evals, evecs = utils.symeig(ic, c0)
+        its = _ivac_its(evals, self.minlag, self.maxlag, self.lagstep)
+
+        self._set_fit_data(c0, evals, evecs, its, trajs, weights)
 
     def transform(self, trajs):
         """Compute IVAC eigenvectors on the input trajectories.
@@ -381,13 +377,21 @@ class LinearIVAC:
             IVAC eigenvectors at each frame of the input trajectories.
 
         """
-        if self.addones:
-            trajs = _addones(trajs)
-        result = []
-        for traj in trajs:
-            traj = np.asarray(traj, dtype=np.float64)
-            result.append(traj @ self.evecs[:, : self.nevecs])
-        return result
+        trajs = utils.preprocess_trajs(trajs, addones=self.addones)
+        return utils.trajs_matmul(trajs, self.evecs[:, : self.nevecs])
+
+    def _set_fit_data(self, cov, evals, evecs, its, trajs, weights):
+        """Set fields computed by the fit method."""
+        self.cov = cov
+        self.evals = evals
+        self.evecs = evecs
+        self.its = its
+        self.trajs = trajs
+        self.weights = weights
+
+
+# -----------------------------------------------------------------------------
+# linear VAC and IVAC scans
 
 
 class LinearVACScan:
@@ -456,11 +460,9 @@ class LinearVACScan:
             List of featurized trajectories.
 
         """
-        if self.addones:
-            trajs = _addones(trajs)
-        self.cov = utils.c0_all(trajs)
+        trajs = utils.preprocess_trajs(trajs, addones=self.addones)
+        nfeatures = utils.get_nfeatures(trajs)
         nlags = len(self.lags)
-        nfeatures = len(self.cov)
         nevecs = self.nevecs
         if nevecs is None:
             nevecs = nfeatures
@@ -469,24 +471,30 @@ class LinearVACScan:
         self.evecs = np.empty((nlags, nfeatures, nevecs))
         self.its = np.empty((nlags, nevecs))
 
+        c0 = utils.c0_all(trajs)
+
         if self.method == "direct":
             for n, lag in enumerate(self.lags):
                 ct = utils.ct_all(trajs, lag)
-                evals, evecs = linalg.eigh(_sym(ct), self.cov)
-                self.evals[n] = evals[::-1][:nevecs]
-                self.evecs[n] = evecs[:, ::-1][:, :nevecs]
-                self.its[n] = _vac_its(self.evals[n], lag)
+                evals, evecs = utils.symeig(ct, c0, nevecs)
+                self.evals[n] = evals
+                self.evecs[n] = evecs
+                self.its[n] = _vac_its(evals, lag)
 
         elif self.method == "fft-all":
             cts = utils.batch_ct_all(trajs, self.lags)
             for n, (ct, lag) in enumerate(zip(cts, self.lags)):
-                evals, evecs = linalg.eigh(_sym(ct), self.cov)
-                self.evals[n] = evals[::-1][:nevecs]
-                self.evecs[n] = evecs[:, ::-1][:, :nevecs]
-                self.its[n] = _vac_its(self.evals[n], lag)
+                evals, evecs = utils.symeig(ct, c0, nevecs)
+                self.evals[n] = evals
+                self.evecs[n] = evecs
+                self.its[n] = _vac_its(evals, lag)
 
         else:
             raise ValueError("method must be 'direct' or 'fft-all'")
+
+        self.cov = c0
+        self.trajs = trajs
+        self.weights = None
 
     def __getitem__(self, lag):
         """Get a fitted LinearVAC with the specified lag time.
@@ -504,10 +512,14 @@ class LinearVACScan:
         """
         i = np.argwhere(self.lags == lag)[0, 0]
         vac = LinearVAC(lag, nevecs=self.nevecs, addones=self.addones)
-        vac.cov = self.cov
-        vac.evals = self.evals[i]
-        vac.evecs = self.evecs[i]
-        vac.its = self.its[i]
+        vac._set_fit_data(
+            self.cov,
+            self.evals[i],
+            self.evecs[i],
+            self.its[i],
+            self.trajs,
+            self.weights,
+        )
         return vac
 
 
@@ -602,14 +614,18 @@ class LinearIVACScan:
             List of featurized trajectories.
 
         """
-        if self.addones:
-            trajs = _addones(trajs)
-        self.cov = utils.c0_all(trajs)
+        trajs = utils.preprocess_trajs(trajs, addones=self.addones)
+        nfeatures = utils.get_nfeatures(trajs)
         nlags = len(self.lags)
-        nfeatures = len(self.cov)
         nevecs = self.nevecs
         if nevecs is None:
             nevecs = nfeatures
+
+        self.evals = np.full((nlags, nlags, nevecs), np.nan)
+        self.evecs = np.full((nlags, nlags, nfeatures, nevecs), np.nan)
+        self.its = np.full((nlags, nlags, nevecs), np.nan)
+
+        c0 = utils.c0_all(trajs)
 
         params = []
         for start, end in zip(self.lags[:-1], self.lags[1:]):
@@ -621,32 +637,33 @@ class LinearIVACScan:
             ics = np.zeros((nlags - 1, nfeatures, nfeatures))
             for n, param in enumerate(params):
                 ics[n] = utils.ic_all(trajs, param, mode=self.method)
+
         elif self.method == "fft-all":
             ics = utils.batch_ic_all(trajs, params)
 
         else:
             raise ValueError("method must be 'direct', 'fft', or 'fft-all")
 
-        self.evals = np.full((nlags, nlags, nevecs), np.nan)
-        self.evecs = np.full((nlags, nlags, nfeatures, nevecs), np.nan)
-        self.its = np.full((nlags, nlags, nevecs), np.nan)
-
         for i in range(nlags):
             ic = utils.ct_all(trajs, self.lags[i])
-            evals, evecs = linalg.eigh(_sym(ic), self.cov)
-            self.evals[i, i] = evals[::-1][:nevecs]
-            self.evecs[i, i] = evecs[:, ::-1][:, :nevecs]
+            evals, evecs = utils.symeig(ic, c0, nevecs)
+            self.evals[i, i] = evals
+            self.evecs[i, i] = evecs
             self.its[i, i] = _ivac_its(
-                self.evals[i, i], self.lags[i], self.lags[i], self.lagstep
+                evals, self.lags[i], self.lags[i], self.lagstep
             )
             for j in range(i + 1, nlags):
                 ic += ics[j - 1]
-                evals, evecs = linalg.eigh(_sym(ic), self.cov)
-                self.evals[i, j] = evals[::-1][:nevecs]
-                self.evecs[i, j] = evecs[:, ::-1][:, :nevecs]
+                evals, evecs = utils.symeig(ic, c0, nevecs)
+                self.evals[i, j] = evals
+                self.evecs[i, j] = evecs
                 self.its[i, j] = _ivac_its(
-                    self.evals[i, j], self.lags[i], self.lags[j], self.lagstep
+                    evals, self.lags[i], self.lags[j], self.lagstep
                 )
+
+        self.cov = c0
+        self.trajs = trajs
+        self.weights = None
 
     def __getitem__(self, lags):
         """Get a fitted LinearIVAC with the specified lag times.
@@ -666,18 +683,25 @@ class LinearIVACScan:
         i = np.argwhere(self.lags == minlag)[0, 0]
         j = np.argwhere(self.lags == maxlag)[0, 0]
         ivac = LinearIVAC(
-            self.lags[i],
-            self.lags[j],
+            minlag,
+            maxlag,
             lagstep=self.lagstep,
             nevecs=self.nevecs,
             addones=self.addones,
-            method=self.method,
         )
-        ivac.cov = self.cov
-        ivac.evals = self.evals[i, j]
-        ivac.evecs = self.evecs[i, j]
-        ivac.its = self.its[i, j]
+        ivac._set_fit_data(
+            self.cov,
+            self.evals[i, j],
+            self.evecs[i, j],
+            self.its[i, j],
+            self.trajs,
+            self.weights,
+        )
         return ivac
+
+
+# -----------------------------------------------------------------------------
+# projection distance
 
 
 def projection_distance(u, v, weights=None, ortho=False):
@@ -816,16 +840,13 @@ def orthonormalize(features, weights=None):
         Orthonormalized features for the input trajectories.
 
     """
+    features = utils.preprocess_trajs(features)
     cov = covmat(features, weights=weights)
     if np.allclose(cov, np.identity(len(cov))):
         return features
     u = linalg.cholesky(cov)
     uinv = linalg.inv(u)
-    result = []
-    for x in features:
-        x = np.asarray(x, dtype=np.float64)
-        result.append(x @ uinv)
-    return result
+    return utils.trajs_matmul(features, uinv)
 
 
 def orthonormalize_coeffs(coeffs, cov=None):
@@ -919,7 +940,9 @@ def covmat(u, v=None, weights=None, lag=0):
         v = u
     if len(u) != len(v):
         raise ValueError("mismatch in the number of trajectories")
-    cov = np.zeros((np.shape(u[0])[-1], np.shape(v[0])[-1]))
+    nfeatures1 = utils.get_nfeatures(u)
+    nfeatures2 = utils.get_nfeatures(v)
+    cov = np.zeros((nfeatures1, nfeatures2))
     count = 0.0
     if weights is None:
         for x, y in zip(u, v):
@@ -950,6 +973,10 @@ def covmat(u, v=None, weights=None, lag=0):
     return cov / count
 
 
+# -----------------------------------------------------------------------------
+# reweighting
+
+
 def _vac_weights(trajs, lag, truncate):
     """Estimate weights for VAC.
 
@@ -972,17 +999,9 @@ def _vac_weights(trajs, lag, truncate):
     """
     ct = utils.ct_trunc(trajs, lag, truncate)
     c0 = utils.c0_trunc(trajs, truncate)
-
-    w = np.squeeze(linalg.null_space((ct - c0).T))
-    if w.ndim != 1:
-        raise ValueError(
-            "{} stationary distributions found".format(w.shape[-1])
-        )
-    weights = []
-    for traj in trajs:
-        weight = traj @ w
-        weight[len(traj) - truncate :] = np.nan
-        weights.append(weight)
+    w = utils.solve_stationary(ct, c0)
+    weights = utils.trajs_matmul(trajs, w)
+    utils.trajs_set_last(weights, truncate)
     return weights
 
 
@@ -1014,18 +1033,14 @@ def _ivac_weights(trajs, lags, truncate, method="direct"):
     """
     ic = utils.ic_trunc(trajs, lags, truncate, mode=method)
     c0 = utils.c0_trunc(trajs, truncate)
-
-    w = np.squeeze(linalg.null_space((ic / len(lags) - c0).T))
-    if w.ndim != 1:
-        raise ValueError(
-            "{} stationary distributions found".format(w.shape[-1])
-        )
-    weights = []
-    for traj in trajs:
-        weight = traj @ w
-        weight[len(traj) - truncate :] = np.nan
-        weights.append(weight)
+    w = utils.solve_stationary(ic / len(lags), c0)
+    weights = utils.trajs_matmul(trajs, w)
+    utils.trajs_set_last(weights, truncate)
     return weights
+
+
+# -----------------------------------------------------------------------------
+# implied timescales
 
 
 def _vac_its(evals, lag):
@@ -1128,40 +1143,3 @@ def _ivac_its_f_p(sigma, val, minlag, dlag, lagstep=1):
         - dlag / np.expm1(sigma * dlag)
     )
     return a - val, -a * b
-
-
-def _addones(trajs):
-    """Add a feature of all ones to featurized trajectories.
-
-    Parameters
-    ----------
-    trajs : list of (n_frames[i], n_features) array-like
-        List of featurized trajectories.
-
-    Returns
-    -------
-    list of (n_frames[i], n_features + 1) ndarray
-        Trajectories with an additional feature of all ones.
-
-    """
-    result = []
-    for traj in trajs:
-        ones = np.ones((len(traj), 1))
-        result.append(np.concatenate([ones, traj], axis=-1))
-    return result
-
-
-def _sym(mat):
-    """Symmetrize matrix.
-
-    Parameters
-    ----------
-    mat : (N, N) ndarray
-        Matrix.
-
-    Returns
-    -------
-    (N, N) ndarray
-        Symmetrized matrix.
-    """
-    return 0.5 * (mat + mat.T)

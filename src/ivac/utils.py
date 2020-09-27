@@ -3,8 +3,26 @@ import numba as nb
 from scipy import linalg, signal
 
 
-def preprocess_trajs(trajs):
-    """Convert trajectories a list of 2d ndarray."""
+# -----------------------------------------------------------------------------
+# trajectory functions
+
+
+def preprocess_trajs(trajs, addones=False):
+    """Prepare trajectories for further calculation.
+
+    Parameters
+    ----------
+    trajs : list of (n_frames[i], n_input_features) array-like
+        List of featurized trajectories.
+    addones : bool, optional
+        If True, add a feature of all ones to featurized trajectories.
+
+    Returns
+    -------
+    list of (n_frames[i], n_output_features) ndarray
+        Trajectories with an additional feature of all ones.
+
+    """
     nfeatures = get_nfeatures(trajs)
     result = []
     for traj in trajs:
@@ -13,6 +31,9 @@ def preprocess_trajs(trajs):
             raise ValueError("each trajectory must be a 2d array")
         if traj.shape[-1] != nfeatures:
             raise ValueError("all trajectories must have the same features")
+        if addones:
+            ones = np.ones((len(traj), 1))
+            traj = np.concatenate([ones, traj], axis=-1)
         result.append(traj)
     return result
 
@@ -20,6 +41,49 @@ def preprocess_trajs(trajs):
 def get_nfeatures(trajs):
     """Get the number of features in a list of trajectories."""
     return np.shape(trajs[0])[-1]
+
+
+def trajs_matmul(trajs, coeffs):
+    """Right matrix multiply coefficients to all trajectories."""
+    result = []
+    for traj in trajs:
+        result.append(traj @ coeffs)
+    return result
+
+
+def trajs_set_last(trajs, n, value=np.nan):
+    """Set last n values of trajectories to a specified value."""
+    for traj in trajs:
+        traj[len(traj) - n :] = value
+
+
+# -----------------------------------------------------------------------------
+# linear algebra
+
+
+def symeig(a, b=None, nevecs=None):
+    """Symmetrize and solve the symmetric eigenvalue problem."""
+    a = 0.5 * (a + a.T)
+    evals, evecs = linalg.eigh(a, b)
+    evals = evals[::-1]
+    evecs = evecs[:, ::-1]
+    return evals[:nevecs], evecs[:, :nevecs]
+
+
+def solve_stationary(a, b=None):
+    """Solve for the left eigenvector with eigenvalue 1."""
+    if b is None:
+        b = np.identity(len(a))
+    w = np.squeeze(linalg.null_space((a - b).T))
+    if w.ndim != 1:
+        raise ValueError(
+            "{} stationary distributions found".format(w.shape[-1])
+        )
+    return w
+
+
+# -----------------------------------------------------------------------------
+# calculation of single correlation matrices
 
 
 def corr(
@@ -283,6 +347,7 @@ def _adj_rt_fft(weight, lags, cutlag):
     return result
 
 
+# -----------------------------------------------------------------------------
 # batch calculation of correlation matrices
 
 

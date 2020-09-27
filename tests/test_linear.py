@@ -10,6 +10,10 @@ def make_data(ns, dt, nbins):
     return [indicator_basis(ou_process(n, dt), nbins) for n in ns]
 
 
+def sym(mat):
+    return 0.5 * (mat + mat.T)
+
+
 def test_vac():
     """Tests for LinearVAC."""
 
@@ -38,7 +42,7 @@ def test_vac():
     assert allclose_trajs_sign(test2.transform(trajs), evecs)
 
     # evals
-    mat = ivac.linear._sym(ivac.utils.ct_all(evecs, lag))
+    mat = sym(ivac.utils.ct_all(evecs, lag))
     assert np.allclose(np.diag(mat), test.evals[:nevecs])
     assert np.allclose(mat, np.diag(test.evals[:nevecs]))
 
@@ -125,9 +129,7 @@ def test_ivac():
     assert allclose_trajs_sign(test2.transform(trajs), evecs)
 
     # evals
-    mat = ivac.linear._sym(
-        ivac.utils.ic_all(evecs, lags=np.arange(minlag, maxlag + 1))
-    )
+    mat = sym(ivac.utils.ic_all(evecs, lags=np.arange(minlag, maxlag + 1)))
     assert np.allclose(np.diag(mat), test.evals[:nevecs])
     assert np.allclose(mat, np.diag(test.evals[:nevecs]))
 
