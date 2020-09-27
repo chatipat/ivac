@@ -51,12 +51,6 @@ def trajs_matmul(trajs, coeffs):
     return result
 
 
-def trajs_set_last(trajs, n, value=np.nan):
-    """Set last n values of trajectories to a specified value."""
-    for traj in trajs:
-        traj[len(traj) - n :] = value
-
-
 # -----------------------------------------------------------------------------
 # linear algebra
 

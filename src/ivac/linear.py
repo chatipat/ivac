@@ -1000,9 +1000,7 @@ def _vac_weights(trajs, lag, truncate):
     ct = utils.ct_trunc(trajs, lag, truncate)
     c0 = utils.c0_trunc(trajs, truncate)
     w = utils.solve_stationary(ct, c0)
-    weights = utils.trajs_matmul(trajs, w)
-    utils.trajs_set_last(weights, truncate)
-    return weights
+    return _build_weights(trajs, w, truncate)
 
 
 def _ivac_weights(trajs, lags, truncate, method="direct"):
@@ -1034,8 +1032,21 @@ def _ivac_weights(trajs, lags, truncate, method="direct"):
     ic = utils.ic_trunc(trajs, lags, truncate, mode=method)
     c0 = utils.c0_trunc(trajs, truncate)
     w = utils.solve_stationary(ic / len(lags), c0)
-    weights = utils.trajs_matmul(trajs, w)
-    utils.trajs_set_last(weights, truncate)
+    return _build_weights(trajs, w, truncate)
+
+
+def _build_weights(trajs, coeffs, truncate):
+    """Build weights from reweighting coefficients."""
+    weights = []
+    total = 0.0
+    for traj in trajs:
+        weight = traj @ coeffs
+        weight[len(traj) - truncate :] = 0.0
+        total += np.sum(weight)
+        weights.append(weight)
+    # normalize weights so that their sum is 1
+    for weight in weights:
+        weight /= total
     return weights
 
 
