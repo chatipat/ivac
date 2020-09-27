@@ -901,8 +901,8 @@ def orthonormalize_coeffs(coeffs, cov=None):
     return coeffs @ uinv
 
 
-def covmat(u, v=None, weights=None, lag=0):
-    r"""Compute the (time lagged) covariance matrix between features.
+def covmat(u, v=None, weights=None):
+    r"""Compute the correlation matrix between features.
 
     For a single trajectory with features
     :math:`\vec{u}_t`, :math:`\vec{v}_t` and weights :math:`w_t`
@@ -911,11 +911,9 @@ def covmat(u, v=None, weights=None, lag=0):
 
     .. math::
 
-        \mathbf{C}(t) =
-            \frac{\sum_{t=1}^{T-\tau} w_t \vec{u}_t \vec{v}_{t+\tau}^T}
-            {\sum_{t=1}^{T-\tau} w_t}
-
-    where :math:`\tau` is the lag time.
+        \mathbf{C} =
+            \frac{\sum_{t=1}^{T} w_t \vec{u}_t \vec{v}_{t}^T}
+            {\sum_{t=1}^{T} w_t}
 
     Parameters
     ----------
@@ -927,13 +925,11 @@ def covmat(u, v=None, weights=None, lag=0):
     weights : list of (n_frames,) array-like, optional
         Weights for each frame of the trajectories.
         If None, weights are assumed to be uniform.
-    lag : int, optional
-        Lag time for the second set of feature in units of frames.
 
     Returns
     -------
     (n_features1, n_features2) ndarray
-        Covariance matrix or time lagged covariance matrix.
+        Covariance matrix.
 
     """
     if v is None:
@@ -948,11 +944,6 @@ def covmat(u, v=None, weights=None, lag=0):
         for x, y in zip(u, v):
             x = np.asarray(x, dtype=np.float64)
             y = np.asarray(y, dtype=np.float64)
-
-            # apply time lag
-            x = x[: len(x) - lag]
-            y = y[lag:]
-
             cov += x.T @ y
             count += len(x)
     else:
@@ -962,13 +953,7 @@ def covmat(u, v=None, weights=None, lag=0):
             x = np.asarray(x, dtype=np.float64)
             y = np.asarray(y, dtype=np.float64)
             w = np.asarray(w, dtype=np.float64)
-
-            # apply time lag
-            x = x[: len(x) - lag]
-            y = y[lag:]
-            w = w[: len(w) - lag]
-
-            cov += np.einsum("n,ni,nj->ij", w, x, y)
+            cov += x.T @ (w[:, None] * y)
             count += np.sum(w)
     return cov / count
 
