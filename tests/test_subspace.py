@@ -72,6 +72,9 @@ def test_orthonormal():
 def test_projection():
     """Test that projection distance calculation works."""
 
+    def isclose(a, b):
+        return np.isclose(a, b, rtol=0.0, atol=1e-6)
+
     trajs = make_data([1000, 1500, 2000], 0.1, 10)
 
     vac = ivac.LinearVAC(5)
@@ -79,34 +82,29 @@ def test_projection():
     evecs = vac.transform(trajs)
 
     # same space has zero projection distance
-    assert np.isclose(
-        ivac.projection_distance(trajs, trajs, ortho=True), 0.0, atol=1e-7
-    )
-    assert np.isclose(
-        ivac.projection_distance(trajs, evecs, ortho=True), 0.0, atol=1e-7
-    )
+    assert isclose(ivac.projection_distance(trajs, trajs, ortho=True), 0.0)
+    assert isclose(ivac.projection_distance(trajs, evecs, ortho=True), 0.0)
 
     # orthonormalization doesn't change results if basis is already orthonormal
-    assert np.isclose(ivac.projection_distance(evecs, evecs), 0.0, atol=1e-7)
+    assert isclose(ivac.projection_distance(evecs, evecs), 0.0)
     evecs1 = [evec[:, :5] for evec in evecs]
     trajs1 = [traj[:, :5] for traj in trajs]
     normal = ivac.orthonormalize(trajs1)
-    assert np.isclose(
+    assert isclose(
         ivac.projection_distance(trajs1, evecs1, ortho=True),
         ivac.projection_distance(normal, evecs1),
-        atol=1e-7,
     )
 
     # rescaling features doesn't change results
     evecs2 = [2.0 * evec for evec in evecs1]
-    assert np.isclose(
+    assert isclose(
         ivac.projection_distance(trajs1, evecs1, ortho=True),
         ivac.projection_distance(trajs1, evecs2, ortho=True),
     )
 
     # swapping features doesn't change results
     evecs2 = [evec[:, ::-1] for evec in evecs1]
-    assert np.isclose(
+    assert isclose(
         ivac.projection_distance(trajs1, evecs1, ortho=True),
         ivac.projection_distance(trajs1, evecs2, ortho=True),
     )
@@ -114,13 +112,13 @@ def test_projection():
     # trajectory order doesn't change results
     evecs2 = [evec[::-1] for evec in evecs1]
     trajs2 = [traj[::-1] for traj in trajs1]
-    assert np.isclose(
+    assert isclose(
         ivac.projection_distance(trajs2, evecs2, ortho=True),
         ivac.projection_distance(trajs1, evecs1, ortho=True),
     )
     evecs2 = [np.concatenate(evecs1, axis=0)]
     trajs2 = [np.concatenate(trajs1, axis=0)]
-    assert np.isclose(
+    assert isclose(
         ivac.projection_distance(trajs2, evecs2, ortho=True),
         ivac.projection_distance(trajs1, evecs1, ortho=True),
     )
@@ -132,12 +130,12 @@ def test_projection():
 
         # monotonic increase when more dimensions are added to the left
         distl = ivac.projection_distance(trajs1, evecs1, ortho=True)
-        assert distl >= left or np.isclose(distl, left)
+        assert distl >= left or isclose(distl, left)
         left = distl
 
         # monotonic decrease when more dimensions are added to the right
         distr = ivac.projection_distance(evecs1, trajs1, ortho=True)
-        assert distr <= right or np.isclose(distr, right)
+        assert distr <= right or isclose(distr, right)
         right = distr
 
         # projection distance is bounded by sqrt(dim(left))
