@@ -95,38 +95,38 @@ def check_corr_trunc(trajs, cutlag, vac_lags, ivac_lags):
 
     # check C(0) against reference
     assert np.allclose(
-        impl.c0_trunc(trajs, cutlag),
+        impl.c0_rt(trajs, cutlag),
         ref.c0_trunc(trajs, cutlag),
     )
 
     # C(t) = C(0) when t = 0
     assert np.allclose(
-        impl.ct_trunc(trajs, 0, cutlag),
+        impl.ct_rt(trajs, 0, cutlag),
         ref.c0_trunc(trajs, cutlag),
     )
 
     # check C(t) against reference
     for lag in vac_lags:
         assert np.allclose(
-            impl.ct_trunc(trajs, lag, cutlag),
+            impl.ct_rt(trajs, lag, cutlag),
             ref.ct_trunc(trajs, lag, cutlag),
         )
 
     # C(tmin, tmax) = C(t) when t = tmin = tmax
     for lag in vac_lags:
         assert np.allclose(
-            impl.ic_trunc(trajs, [lag], cutlag),
+            impl.ic_rt(trajs, [lag], cutlag),
             ref.ct_trunc(trajs, lag, cutlag),
         )
 
     # check C(tmin, tmax) against reference
     for lags in ivac_lags:
         assert np.allclose(
-            impl.ic_trunc(trajs, lags, cutlag),
+            impl.ic_rt(trajs, lags, cutlag),
             ref.ic_trunc(trajs, lags, cutlag),
         )
         assert np.allclose(
-            impl.ic_trunc(trajs, lags, cutlag, mode="fft"),
+            impl.ic_rt(trajs, lags, cutlag, mode="fft"),
             ref.ic_trunc(trajs, lags, cutlag),
         )
 
@@ -206,17 +206,15 @@ def check_corr_batch(trajs):
     for i, param in enumerate(params):
         assert np.allclose(test[i], ref.ic_all(trajs, param))
 
-    # nonequilibrium IVAC: weight estimation
+    # nonequilibrium IVAC
 
-    test = impl.batch_ct_trunc(trajs, lags, cutlag)
+    test = impl.batch_ct_rt(trajs, lags, cutlag)
     for i, lag in enumerate(lags):
         assert np.allclose(test[i], ref.ct_trunc(trajs, lag, cutlag))
 
-    test = impl.batch_ic_trunc(trajs, params, cutlag)
+    test = impl.batch_ic_rt(trajs, params, cutlag)
     for i, param in enumerate(params):
         assert np.allclose(test[i], ref.ic_trunc(trajs, param, cutlag))
-
-    # nonequilibrium IVAC: reweighted matrices with truncated data
 
     test = impl.batch_ct_rt(trajs, lags, cutlag, weights)
     for i, lag in enumerate(lags):

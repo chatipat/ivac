@@ -982,8 +982,8 @@ def _vac_weights(trajs, lag, truncate):
         Weight of trajectory starting at each configuration.
 
     """
-    ct = utils.ct_trunc(trajs, lag, truncate)
-    c0 = utils.c0_trunc(trajs, truncate)
+    ct = utils.ct_rt(trajs, lag, truncate)
+    c0 = utils.c0_rt(trajs, truncate)
     w = utils.solve_stationary(ct, c0)
     return _build_weights(trajs, w, truncate)
 
@@ -1014,8 +1014,8 @@ def _ivac_weights(trajs, lags, truncate, method="direct"):
         Weight of trajectory starting at each configuration.
 
     """
-    ic = utils.ic_trunc(trajs, lags, truncate, mode=method)
-    c0 = utils.c0_trunc(trajs, truncate)
+    ic = utils.ic_rt(trajs, lags, truncate, mode=method)
+    c0 = utils.c0_rt(trajs, truncate)
     w = utils.solve_stationary(ic / len(lags), c0)
     return _build_weights(trajs, w, truncate)
 

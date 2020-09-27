@@ -260,29 +260,14 @@ def _adj_all(wlen, lags, wlags):
     return weight
 
 
-# nonequilibrium IVAC: weight estimation
+# nonequilibrium IVAC
 
 
-def c0_trunc(trajs, cutlag):
-    return corr(delay(0), delay(0), trajs, cutlag)
-
-
-def ct_trunc(trajs, lag, cutlag):
-    return corr(delay(0), delay(lag), trajs, cutlag)
-
-
-def ic_trunc(trajs, lags, cutlag, mode="direct"):
-    return corr(delay(0), integrate(lags, mode=mode), trajs, cutlag)
-
-
-# nonequilibrium IVAC: reweighted matrices with truncated data
-
-
-def c0_rt(trajs, cutlag, weights):
+def c0_rt(trajs, cutlag, weights=None):
     return corr(delay(0), delay(0), trajs, cutlag, weights=weights)
 
 
-def ct_rt(trajs, lag, cutlag, weights):
+def ct_rt(trajs, lag, cutlag, weights=None):
     return corr(delay(0), delay(lag), trajs, cutlag, weights=weights)
 
 
@@ -290,7 +275,7 @@ def c0_rt_adj_ct(trajs, lag, cutlag, weights):
     return c0_rt_adj_ic(trajs, [lag], cutlag, weights)
 
 
-def ic_rt(trajs, lags, cutlag, weights, mode="direct"):
+def ic_rt(trajs, lags, cutlag, weights=None, mode="direct"):
     return corr(
         delay(0), integrate(lags, mode=mode), trajs, cutlag, weights=weights
     )
@@ -406,85 +391,64 @@ def batch_ic_all(trajs, params):
     return result
 
 
-# nonequilibrium IVAC: weight estimation
+# nonequilibrium IVAC
 
 
-def batch_ct_trunc(trajs, lags, cutlag):
-    minlag = min(lags)
-    maxlag = max(lags)
-    nfeatures = get_nfeatures(trajs)
-    numer = np.zeros((len(lags), nfeatures, nfeatures))
-    denom = 0.0
-    for traj in trajs:
-        length = len(traj) - cutlag
-        if length > 0:
-            x = traj[:length]
-            y = traj[minlag : length + maxlag]
-            conv = signal.fftconvolve(
-                x[::-1, :, None], y[:, None, :], mode="valid", axes=0
-            )
-            assert len(conv) == maxlag - minlag + 1
-            numer += conv[lags - minlag]
-            denom += length
-    return numer / denom
-
-
-def batch_ic_trunc(trajs, params, cutlag):
-    all_lags = np.concatenate(params)
-    minlag, maxlag = min(all_lags), max(all_lags)
-    nfeatures = get_nfeatures(trajs)
-    numer = np.zeros((len(params), nfeatures, nfeatures))
-    denom = 0.0
-    for traj in trajs:
-        length = len(traj) - cutlag
-        if length > 0:
-            x = traj[:length]
-            y = traj[minlag : length + maxlag]
-            conv = _batch_fft_trunc(x, y)
-            assert len(conv) == maxlag - minlag + 1
-            for n, lags in enumerate(params):
-                numer[n] += np.sum(conv[lags - minlag], axis=0)
-            denom += length
-    return numer / denom
-
-
-# nonequilibrium IVAC: reweighted matrices with truncated data
-
-
-def batch_ct_rt(trajs, lags, cutlag, weights):
+def batch_ct_rt(trajs, lags, cutlag, weights=None):
     minlag, maxlag = min(lags), max(lags)
     nfeatures = get_nfeatures(trajs)
     numer = np.zeros((len(lags), nfeatures, nfeatures))
     denom = 0.0
-    for traj, weight in zip(trajs, weights):
-        length = len(traj) - cutlag
-        if length > 0:
-            w = weight[:length]
-            x = traj[:length]
-            y = traj[minlag : length + maxlag]
-            conv = _batch_fft_trunc(x * w[:, None], y)
-            assert len(conv) == maxlag - minlag + 1
-            numer += conv[lags - minlag]
-            denom += np.sum(w)
+    if weights is None:
+        for traj in trajs:
+            length = len(traj) - cutlag
+            if length > 0:
+                x = traj[:length]
+                y = traj[minlag : length + maxlag]
+                conv = _batch_fft_trunc(x, y)
+                numer += conv[lags - minlag]
+                denom += length
+    else:
+        for traj, weight in zip(trajs, weights):
+            length = len(traj) - cutlag
+            if length > 0:
+                w = weight[:length]
+                x = traj[:length]
+                y = traj[minlag : length + maxlag]
+                conv = _batch_fft_trunc(x * w[:, None], y)
+                assert len(conv) == maxlag - minlag + 1
+                numer += conv[lags - minlag]
+                denom += np.sum(w)
     return numer / denom
 
 
-def batch_ic_rt(trajs, params, cutlag, weights):
+def batch_ic_rt(trajs, params, cutlag, weights=None):
     all_lags = np.concatenate(params)
     minlag, maxlag = min(all_lags), max(all_lags)
     nfeatures = get_nfeatures(trajs)
     numer = np.zeros((len(params), nfeatures, nfeatures))
     denom = 0.0
-    for traj, weight in zip(trajs, weights):
-        length = len(traj) - cutlag
-        if length > 0:
-            w = weight[:length]
-            x = traj[:length]
-            y = traj[minlag : length + maxlag]
-            conv = _batch_fft_trunc(x * w[:, None], y)
-            for n, lags in enumerate(params):
-                numer[n] += np.sum(conv[lags - minlag], axis=0)
-            denom += np.sum(w)
+    if weights is None:
+        for traj in trajs:
+            length = len(traj) - cutlag
+            if length > 0:
+                x = traj[:length]
+                y = traj[minlag : length + maxlag]
+                conv = _batch_fft_trunc(x, y)
+                for n, lags in enumerate(params):
+                    numer[n] += np.sum(conv[lags - minlag], axis=0)
+                denom += length
+    else:
+        for traj, weight in zip(trajs, weights):
+            length = len(traj) - cutlag
+            if length > 0:
+                w = weight[:length]
+                x = traj[:length]
+                y = traj[minlag : length + maxlag]
+                conv = _batch_fft_trunc(x * w[:, None], y)
+                for n, lags in enumerate(params):
+                    numer[n] += np.sum(conv[lags - minlag], axis=0)
+                denom += np.sum(w)
     return numer / denom
 
 
