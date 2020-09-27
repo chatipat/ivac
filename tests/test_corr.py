@@ -30,6 +30,8 @@ def test_corr():
     check_corr_rt(trajs, 20, weights1, vac_lags1, ivac_lags1)
     check_corr_rt(trajs, 10, weights2, vac_lags2, ivac_lags2)
 
+    check_corr_batch(trajs)
+
 
 def check_corr_all(trajs, vac_lags, ivac_lags):
     """Test correlation matrices for equilibrium IVAC."""
@@ -183,4 +185,55 @@ def check_corr_rt(trajs, cutlag, weights, vac_lags, ivac_lags):
         assert np.allclose(
             impl.c0_rt_adj_ic(trajs, lags, cutlag, weights, mode="fft"),
             ref.c0_rt_adj_ic(trajs, lags, cutlag, weights),
+        )
+
+
+def check_corr_batch(trajs):
+    """Test batch correlation matrix calculations."""
+
+    params = [np.arange(0, 11, 2) + i for i in range(1, 11)]
+    lags = np.unique(np.concatenate(params))
+    cutlag = max(lags)
+    weights = _ivac_weights(trajs, lags, cutlag, mode="fft")
+
+    # equilibrium IVAC
+
+    test = impl.batch_ct_all(trajs, lags)
+    for i, lag in enumerate(lags):
+        assert np.allclose(test[i], ref.ct_all(trajs, lag))
+
+    test = impl.batch_ic_all(trajs, params)
+    for i, param in enumerate(params):
+        assert np.allclose(test[i], ref.ic_all(trajs, param))
+
+    # nonequilibrium IVAC: weight estimation
+
+    test = impl.batch_ct_trunc(trajs, lags, cutlag)
+    for i, lag in enumerate(lags):
+        assert np.allclose(test[i], ref.ct_trunc(trajs, lag, cutlag))
+
+    test = impl.batch_ic_trunc(trajs, params, cutlag)
+    for i, param in enumerate(params):
+        assert np.allclose(test[i], ref.ic_trunc(trajs, param, cutlag))
+
+    # nonequilibrium IVAC: reweighted matrices with truncated data
+
+    test = impl.batch_ct_rt(trajs, lags, cutlag, weights)
+    for i, lag in enumerate(lags):
+        assert np.allclose(test[i], ref.ct_rt(trajs, lag, cutlag, weights))
+
+    test = impl.batch_ic_rt(trajs, params, cutlag, weights)
+    for i, param in enumerate(params):
+        assert np.allclose(test[i], ref.ic_rt(trajs, param, cutlag, weights))
+
+    test = impl.batch_c0_rt_adj_ct(trajs, lags, cutlag, weights)
+    for i, lag in enumerate(lags):
+        assert np.allclose(
+            test[i], ref.c0_rt_adj_ct(trajs, lag, cutlag, weights)
+        )
+
+    test = impl.batch_c0_rt_adj_ic(trajs, params, cutlag, weights)
+    for i, param in enumerate(params):
+        assert np.allclose(
+            test[i], ref.c0_rt_adj_ic(trajs, param, cutlag, weights)
         )
