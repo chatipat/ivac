@@ -1,9 +1,18 @@
-import itertools
 import numba as nb
 import numpy as np
 import warnings
 from scipy import linalg, optimize
-from . import utils
+from .utils import (
+    preprocess_trajs,
+    get_nfeatures,
+    trajs_matmul,
+    symeig,
+    solve_stationary,
+    compute_ic,
+    compute_c0,
+    batch_compute_ic,
+    batch_compute_c0,
+)
 
 
 # -----------------------------------------------------------------------------
@@ -119,31 +128,28 @@ class LinearVAC:
             List of featurized trajectories.
 
         """
-        trajs = utils.preprocess_trajs(trajs, addones=self.addones)
+        trajs = preprocess_trajs(trajs, addones=self.addones)
+
+        if self.truncate is False:
+            cutlag = None
+        else:
+            cutlag = self.truncate
 
         if self.reweight:
             if weights is None:
-                weights = _vac_weights(trajs, self.lag, self.truncate)
+                weights = _ivac_weights(trajs, self.lag, cutlag)
         else:
             if weights is not None:
                 raise ValueError("weights provided but not reweighting")
 
-        if self.truncate is False:
-            ct = utils.ct_all(trajs, self.lag)
-            if self.adjust:
-                c0 = utils.c0_all_adj_ct(trajs, self.lag)
-            else:
-                c0 = utils.c0_all(trajs)
-        else:
-            ct = utils.ct_rt(trajs, self.lag, self.truncate, weights)
-            if self.adjust:
-                c0 = utils.c0_rt_adj_ct(
-                    trajs, self.lag, self.truncate, weights
-                )
-            else:
-                c0 = utils.c0_rt(trajs, self.truncate, weights)
+        c0, evals, evecs = _solve_ivac(
+            trajs,
+            self.lag,
+            cutlag=cutlag,
+            weights=weights,
+            adjust=self.adjust,
+        )
 
-        evals, evecs = utils.symeig(ct, c0)
         its = _vac_its(evals, self.lag)
         self._set_fit_data(c0, evals, evecs, its, trajs, weights)
 
@@ -164,8 +170,8 @@ class LinearVAC:
             VAC eigenvectors at each frame of the input trajectories.
 
         """
-        trajs = utils.preprocess_trajs(trajs, addones=self.addones)
-        return utils.trajs_matmul(trajs, self.evecs[:, : self.nevecs])
+        trajs = preprocess_trajs(trajs, addones=self.addones)
+        return trajs_matmul(trajs, self.evecs[:, : self.nevecs])
 
     def _set_fit_data(self, cov, evals, evecs, its, trajs, weights):
         """Set fields computed by the fit method."""
@@ -322,7 +328,7 @@ class LinearIVAC:
             List of featurized trajectories.
 
         """
-        trajs = utils.preprocess_trajs(trajs, addones=self.addones)
+        trajs = preprocess_trajs(trajs, addones=self.addones)
 
         if self.reweight:
             if weights is None:
@@ -334,23 +340,18 @@ class LinearIVAC:
                 raise ValueError("weights provided but not reweighting")
 
         if self.truncate is False:
-            ic = utils.ic_all(trajs, self.lags, mode=self.method)
-            if self.adjust:
-                c0 = utils.c0_all_adj_ic(trajs, self.lags, mode=self.method)
-            else:
-                c0 = utils.c0_all(trajs)
+            cutlag = None
         else:
-            ic = utils.ic_rt(
-                trajs, self.lags, self.truncate, weights, mode=self.method
-            )
-            if self.adjust:
-                c0 = utils.c0_rt_adj_ic(
-                    trajs, self.lags, self.truncate, weights, mode=self.method
-                )
-            else:
-                c0 = utils.c0_rt(trajs, self.truncate, weights)
+            cutlag = self.truncate
 
-        evals, evecs = utils.symeig(ic, c0)
+        c0, evals, evecs = _solve_ivac(
+            trajs,
+            self.lags,
+            cutlag=cutlag,
+            weights=weights,
+            adjust=self.adjust,
+            method=self.method,
+        )
         its = _ivac_its(evals, self.minlag, self.maxlag, self.lagstep)
         self._set_fit_data(c0, evals, evecs, its, trajs, weights)
 
@@ -371,8 +372,8 @@ class LinearIVAC:
             IVAC eigenvectors at each frame of the input trajectories.
 
         """
-        trajs = utils.preprocess_trajs(trajs, addones=self.addones)
-        return utils.trajs_matmul(trajs, self.evecs[:, : self.nevecs])
+        trajs = preprocess_trajs(trajs, addones=self.addones)
+        return trajs_matmul(trajs, self.evecs[:, : self.nevecs])
 
     def _set_fit_data(self, cov, evals, evecs, its, trajs, weights):
         """Set fields computed by the fit method."""
@@ -382,6 +383,43 @@ class LinearIVAC:
         self.its = its
         self.trajs = trajs
         self.weights = weights
+
+
+def _solve_ivac(
+    trajs,
+    lags,
+    cutlag=None,
+    weights=None,
+    adjust=False,
+    method=None,
+):
+    ic = compute_ic(
+        trajs,
+        lags,
+        cutlag=cutlag,
+        weights=weights,
+        mode=method,
+    )
+
+    if adjust:
+        c0 = compute_c0(
+            trajs,
+            lags,
+            cutlag=cutlag,
+            weights=weights,
+            mode=method,
+        )
+    else:
+        c0 = compute_c0(
+            trajs,
+            None,
+            cutlag=cutlag,
+            weights=weights,
+            mode=method,
+        )
+
+    evals, evecs = symeig(ic, c0)
+    return c0, evals, evecs
 
 
 # -----------------------------------------------------------------------------
@@ -480,8 +518,8 @@ class LinearVACScan:
             List of featurized trajectories.
 
         """
-        trajs = utils.preprocess_trajs(trajs, addones=self.addones)
-        nfeatures = utils.get_nfeatures(trajs)
+        trajs = preprocess_trajs(trajs, addones=self.addones)
+        nfeatures = get_nfeatures(trajs)
         nlags = len(self.lags)
         nevecs = self.nevecs
         if nevecs is None:
@@ -492,15 +530,15 @@ class LinearVACScan:
         else:
             cutlag = self.truncate
 
-        cts = utils.batch_compute_ic(
+        cts = batch_compute_ic(
             trajs, self.lags, cutlag, weights, mode=self.method
         )
         if self.adjust:
-            c0s = utils.batch_compute_c0(
+            c0s = batch_compute_c0(
                 trajs, self.lags, cutlag, weights, mode=self.method
             )
         else:
-            c0s = utils.batch_compute_c0(
+            c0s = batch_compute_c0(
                 trajs, None, cutlag, weights, mode=self.method
             )
 
@@ -509,7 +547,7 @@ class LinearVACScan:
         self.its = np.empty((nlags, nevecs))
 
         for n, (ct, c0, lag) in enumerate(zip(cts, c0s, self.lags)):
-            evals, evecs = utils.symeig(ct, c0, nevecs)
+            evals, evecs = symeig(ct, c0, nevecs)
             self.evals[n] = evals
             self.evecs[n] = evecs
             self.its[n] = _vac_its(evals, lag)
@@ -659,8 +697,8 @@ class LinearIVACScan:
             List of featurized trajectories.
 
         """
-        trajs = utils.preprocess_trajs(trajs, addones=self.addones)
-        nfeatures = utils.get_nfeatures(trajs)
+        trajs = preprocess_trajs(trajs, addones=self.addones)
+        nfeatures = get_nfeatures(trajs)
         nlags = len(self.lags)
         nevecs = self.nevecs
         if nevecs is None:
@@ -677,20 +715,16 @@ class LinearIVACScan:
         ]
 
         ics = list(
-            utils.batch_compute_ic(
-                trajs, params, cutlag, weights, mode=self.method
-            )
+            batch_compute_ic(trajs, params, cutlag, weights, mode=self.method)
         )
         if self.adjust:
             c0s = list(
-                utils.batch_compute_c0(
+                batch_compute_c0(
                     trajs, params, cutlag, weights, mode=self.method
                 )
             )
         else:
-            c0 = utils.compute_c0(
-                trajs, None, cutlag, weights, mode=self.method
-            )
+            c0 = compute_c0(trajs, None, cutlag, weights, mode=self.method)
             denom = 1
 
         self.evals = np.full((nlags, nlags, nevecs), np.nan)
@@ -698,15 +732,15 @@ class LinearIVACScan:
         self.its = np.full((nlags, nlags, nevecs), np.nan)
 
         for i in range(nlags):
-            ic = utils.compute_ic(
+            ic = compute_ic(
                 trajs, self.lags[i], cutlag, weights, mode=self.method
             )
             if self.adjust:
-                c0 = utils.compute_c0(
-                    trajs, self.lags[i], cutlag, weights, method=self.method
+                c0 = compute_c0(
+                    trajs, self.lags[i], cutlag, weights, mode=self.method
                 )
                 denom = 1
-            evals, evecs = utils.symeig(ic, c0, nevecs)
+            evals, evecs = symeig(ic, c0, nevecs)
             self.evals[i, i] = evals
             self.evecs[i, i] = evecs
             self.its[i, i] = _ivac_its(
@@ -718,7 +752,7 @@ class LinearIVACScan:
                     count = (self.lags[j] - self.lags[j - 1]) // self.lagstep
                     c0 += c0s[j - 1] * count
                     denom += count
-                evals, evecs = utils.symeig(ic, c0 / denom, nevecs)
+                evals, evecs = symeig(ic, c0 / denom, nevecs)
                 self.evals[i, j] = evals
                 self.evecs[i, j] = evecs
                 self.its[i, j] = _ivac_its(
@@ -907,13 +941,13 @@ def orthonormalize(features, weights=None):
         Orthonormalized features for the input trajectories.
 
     """
-    features = utils.preprocess_trajs(features)
+    features = preprocess_trajs(features)
     cov = covmat(features, weights=weights)
     if np.allclose(cov, np.identity(len(cov))):
         return features
     u = linalg.cholesky(cov)
     uinv = linalg.inv(u)
-    return utils.trajs_matmul(features, uinv)
+    return trajs_matmul(features, uinv)
 
 
 def orthonormalize_coeffs(coeffs, cov=None):
@@ -1003,8 +1037,8 @@ def covmat(u, v=None, weights=None):
         v = u
     if len(u) != len(v):
         raise ValueError("mismatch in the number of trajectories")
-    nfeatures1 = utils.get_nfeatures(u)
-    nfeatures2 = utils.get_nfeatures(v)
+    nfeatures1 = get_nfeatures(u)
+    nfeatures2 = get_nfeatures(v)
     cov = np.zeros((nfeatures1, nfeatures2))
     count = 0.0
     if weights is None:
@@ -1029,33 +1063,7 @@ def covmat(u, v=None, weights=None):
 # reweighting
 
 
-def _vac_weights(trajs, lag, truncate):
-    """Estimate weights for VAC.
-
-    Parameters
-    ----------
-    trajs : list of (n_frames[i], n_features) ndarray
-        List of featurized trajectories.
-        The features must be able to represent constant features.
-    lag : int
-        VAC lag time, in units of frames.
-    truncate : int
-        Number of frames to drop from the end of each trajectory.
-        This must be greater than or equal to the VAC lag time.
-
-    Returns
-    -------
-    list of (n_frames[i],) ndarray
-        Weight of trajectory starting at each configuration.
-
-    """
-    ct = utils.ct_rt(trajs, lag, truncate)
-    c0 = utils.c0_rt(trajs, truncate)
-    w = utils.solve_stationary(ct, c0)
-    return _build_weights(trajs, w, truncate)
-
-
-def _ivac_weights(trajs, lags, truncate, method="direct"):
+def _ivac_weights(trajs, lags, cutlag, method="direct"):
     """Estimate weights for IVAC.
 
     Parameters
@@ -1081,10 +1089,12 @@ def _ivac_weights(trajs, lags, truncate, method="direct"):
         Weight of trajectory starting at each configuration.
 
     """
-    ic = utils.ic_rt(trajs, lags, truncate, mode=method)
-    c0 = utils.c0_rt(trajs, truncate)
-    w = utils.solve_stationary(ic / len(lags), c0)
-    return _build_weights(trajs, w, truncate)
+    lags = np.atleast_1d(lags)
+    assert lags.ndim == 1
+    ic = compute_ic(trajs, lags, cutlag=cutlag, mode=method)
+    c0 = compute_c0(trajs, cutlag=cutlag)
+    w = solve_stationary(ic / len(lags), c0)
+    return _build_weights(trajs, w, cutlag)
 
 
 def _build_weights(trajs, coeffs, truncate):
