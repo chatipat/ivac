@@ -1,5 +1,6 @@
-import numpy as np
+import itertools
 import numba as nb
+import numpy as np
 import warnings
 from scipy import linalg, optimize
 from . import utils
@@ -94,6 +95,10 @@ class LinearVAC:
             truncate = lag
         if truncate is not False and truncate < lag:
             raise ValueError("truncate is less than lag")
+        if reweight and truncate is False:
+            raise ValueError(
+                "reweighting is only supported for mode 'truncate'"
+            )
 
         self.lag = lag
         self.nevecs = nevecs
@@ -102,7 +107,7 @@ class LinearVAC:
         self.adjust = adjust
         self.truncate = truncate
 
-    def fit(self, trajs):
+    def fit(self, trajs, weights=None):
         """Compute VAC results from input trajectories.
 
         Calculate and store VAC eigenvalues, eigenvector coefficients,
@@ -116,26 +121,20 @@ class LinearVAC:
         """
         trajs = utils.preprocess_trajs(trajs, addones=self.addones)
 
-        weights = None
+        if self.reweight:
+            if weights is None:
+                weights = _vac_weights(trajs, self.lag, self.truncate)
+        else:
+            if weights is not None:
+                raise ValueError("weights provided but not reweighting")
 
         if self.truncate is False:
-
-            if self.reweight:
-                raise ValueError(
-                    "reweighting is only supported for mode 'truncate'"
-                )
-
             ct = utils.ct_all(trajs, self.lag)
             if self.adjust:
                 c0 = utils.c0_all_adj_ct(trajs, self.lag)
             else:
                 c0 = utils.c0_all(trajs)
-
         else:
-
-            if self.reweight:
-                weights = _vac_weights(trajs, self.lag, self.truncate)
-
             ct = utils.ct_rt(trajs, self.lag, self.truncate, weights)
             if self.adjust:
                 c0 = utils.c0_rt_adj_ct(
@@ -146,7 +145,6 @@ class LinearVAC:
 
         evals, evecs = utils.symeig(ct, c0)
         its = _vac_its(evals, self.lag)
-
         self._set_fit_data(c0, evals, evecs, its, trajs, weights)
 
     def transform(self, trajs):
@@ -294,9 +292,17 @@ class LinearIVAC:
             truncate = maxlag
         if truncate is not False and truncate < maxlag:
             raise ValueError("truncate is less than maxlag")
+        if reweight and truncate is False:
+            raise ValueError(
+                "reweighting is only supported for mode 'truncate'"
+            )
+        if method not in ["direct", "fft"]:
+            raise ValueError("method must be 'direct', or 'fft'")
+
         self.minlag = minlag
         self.maxlag = maxlag
         self.lagstep = lagstep
+        self.lags = np.arange(self.minlag, self.maxlag + 1, self.lagstep)
         self.nevecs = nevecs
         self.addones = addones
         self.reweight = reweight
@@ -304,7 +310,7 @@ class LinearIVAC:
         self.truncate = truncate
         self.method = method
 
-    def fit(self, trajs):
+    def fit(self, trajs, weights=None):
         """Compute IVAC results from input trajectories.
 
         Calculate and store IVAC eigenvalues, eigenvector coefficients,
@@ -318,46 +324,34 @@ class LinearIVAC:
         """
         trajs = utils.preprocess_trajs(trajs, addones=self.addones)
 
-        weights = None
-
-        lags = np.arange(self.minlag, self.maxlag + 1, self.lagstep)
-
-        if self.method not in ["direct", "fft"]:
-            raise ValueError("method must be 'direct', or 'fft'")
+        if self.reweight:
+            if weights is None:
+                weights = _ivac_weights(
+                    trajs, self.lags, self.truncate, mode=self.method
+                )
+        else:
+            if weights is not None:
+                raise ValueError("weights provided but not reweighting")
 
         if self.truncate is False:
-
-            if self.reweight:
-                raise ValueError(
-                    "reweighting is only supported with mode 'truncate'"
-                )
-
-            ic = utils.ic_all(trajs, lags, mode=self.method)
+            ic = utils.ic_all(trajs, self.lags, mode=self.method)
             if self.adjust:
-                c0 = utils.c0_all_adj_ic(trajs, lags, mode=self.method)
+                c0 = utils.c0_all_adj_ic(trajs, self.lags, mode=self.method)
             else:
                 c0 = utils.c0_all(trajs)
-
         else:
-
-            if self.reweight:
-                weights = _ivac_weights(
-                    trajs, lags, self.truncate, mode=self.method
-                )
-
             ic = utils.ic_rt(
-                trajs, lags, self.truncate, weights, mode=self.method
+                trajs, self.lags, self.truncate, weights, mode=self.method
             )
             if self.adjust:
                 c0 = utils.c0_rt_adj_ic(
-                    trajs, lags, self.truncate, weights, mode=self.method
+                    trajs, self.lags, self.truncate, weights, mode=self.method
                 )
             else:
                 c0 = utils.c0_rt(trajs, self.truncate, weights)
 
         evals, evecs = utils.symeig(ic, c0)
         its = _ivac_its(evals, self.minlag, self.maxlag, self.lagstep)
-
         self._set_fit_data(c0, evals, evecs, its, trajs, weights)
 
     def transform(self, trajs):
@@ -442,13 +436,39 @@ class LinearVACScan:
 
     """
 
-    def __init__(self, lags, nevecs=None, addones=False, method="direct"):
+    def __init__(
+        self,
+        lags,
+        nevecs=None,
+        addones=False,
+        reweight=False,
+        adjust=False,
+        truncate=None,
+        method="direct",
+    ):
+        maxlag = np.max(lags)
+        if truncate is None:
+            truncate = reweight
+        if truncate is True:
+            truncate = maxlag
+        if truncate is not False and truncate < maxlag:
+            raise ValueError("truncate is less than maxlag")
+        if reweight and truncate is False:
+            raise ValueError(
+                "reweighting is only supported for mode 'truncate'"
+            )
+        if method not in ["direct", "fft-all"]:
+            raise ValueError("method must be 'direct' or 'fft-all'")
+
         self.lags = lags
         self.nevecs = nevecs
         self.addones = addones
+        self.reweight = reweight
+        self.adjust = adjust
+        self.truncate = truncate
         self.method = method
 
-    def fit(self, trajs):
+    def fit(self, trajs, weights=None):
         """Compute VAC results from input trajectories.
 
         Calculate and store VAC eigenvalues, eigenvector coefficients,
@@ -467,34 +487,39 @@ class LinearVACScan:
         if nevecs is None:
             nevecs = nfeatures
 
+        if self.truncate is False:
+            cutlag = None
+        else:
+            cutlag = self.truncate
+
+        cts = utils.batch_compute_ic(
+            trajs, self.lags, cutlag, weights, mode=self.method
+        )
+        if self.adjust:
+            c0s = utils.batch_compute_c0(
+                trajs, self.lags, cutlag, weights, mode=self.method
+            )
+        else:
+            c0s = utils.batch_compute_c0(
+                trajs, None, cutlag, weights, mode=self.method
+            )
+
         self.evals = np.empty((nlags, nevecs))
         self.evecs = np.empty((nlags, nfeatures, nevecs))
         self.its = np.empty((nlags, nevecs))
 
-        c0 = utils.c0_all(trajs)
+        for n, (ct, c0, lag) in enumerate(zip(cts, c0s, self.lags)):
+            evals, evecs = utils.symeig(ct, c0, nevecs)
+            self.evals[n] = evals
+            self.evecs[n] = evecs
+            self.its[n] = _vac_its(evals, lag)
 
-        if self.method == "direct":
-            for n, lag in enumerate(self.lags):
-                ct = utils.ct_all(trajs, lag)
-                evals, evecs = utils.symeig(ct, c0, nevecs)
-                self.evals[n] = evals
-                self.evecs[n] = evecs
-                self.its[n] = _vac_its(evals, lag)
-
-        elif self.method == "fft-all":
-            cts = utils.batch_ct_all(trajs, self.lags)
-            for n, (ct, lag) in enumerate(zip(cts, self.lags)):
-                evals, evecs = utils.symeig(ct, c0, nevecs)
-                self.evals[n] = evals
-                self.evecs[n] = evecs
-                self.its[n] = _vac_its(evals, lag)
-
+        if self.adjust:
+            self.cov = None
         else:
-            raise ValueError("method must be 'direct' or 'fft-all'")
-
-        self.cov = c0
+            self.cov = c0
         self.trajs = trajs
-        self.weights = None
+        self.weights = weights
 
     def __getitem__(self, lag):
         """Get a fitted LinearVAC with the specified lag time.
@@ -588,6 +613,9 @@ class LinearIVACScan:
         lagstep=1,
         nevecs=None,
         addones=False,
+        reweight=False,
+        adjust=False,
+        truncate=None,
         method="direct",
     ):
         if np.any(lags[1:] < lags[:-1]):
@@ -596,13 +624,30 @@ class LinearIVACScan:
             raise ValueError(
                 "lags time intervals must be multiples of lagstep"
             )
+        maxlag = np.max(lags)
+        if truncate is None:
+            truncate = reweight
+        if truncate is True:
+            truncate = maxlag
+        if truncate is not False and truncate < maxlag:
+            raise ValueError("truncate is less than maxlag")
+        if reweight and truncate is False:
+            raise ValueError(
+                "reweighting is only supported for mode 'truncate'"
+            )
+        if method not in ["direct", "fft", "fft-all"]:
+            raise ValueError("method must be 'direct', 'fft', or 'fft-all")
+
         self.lags = lags
         self.lagstep = lagstep
         self.nevecs = nevecs
         self.addones = addones
+        self.reweight = reweight
+        self.adjust = adjust
+        self.truncate = truncate
         self.method = method
 
-    def fit(self, trajs):
+    def fit(self, trajs, weights=None):
         """Compute IVAC results from input trajectories.
 
         Calculate and store IVAC eigenvalues, eigenvector coefficients,
@@ -621,31 +666,46 @@ class LinearIVACScan:
         if nevecs is None:
             nevecs = nfeatures
 
+        if self.truncate is False:
+            cutlag = None
+        else:
+            cutlag = self.truncate
+
+        params = [
+            np.arange(start + self.lagstep, end + 1, self.lagstep)
+            for start, end in zip(self.lags[:-1], self.lags[1:])
+        ]
+
+        ics = list(
+            utils.batch_compute_ic(
+                trajs, params, cutlag, weights, mode=self.method
+            )
+        )
+        if self.adjust:
+            c0s = list(
+                utils.batch_compute_c0(
+                    trajs, params, cutlag, weights, mode=self.method
+                )
+            )
+        else:
+            c0 = utils.compute_c0(
+                trajs, None, cutlag, weights, mode=self.method
+            )
+            denom = 1
+
         self.evals = np.full((nlags, nlags, nevecs), np.nan)
         self.evecs = np.full((nlags, nlags, nfeatures, nevecs), np.nan)
         self.its = np.full((nlags, nlags, nevecs), np.nan)
 
-        c0 = utils.c0_all(trajs)
-
-        params = []
-        for start, end in zip(self.lags[:-1], self.lags[1:]):
-            params.append(
-                np.arange(start + self.lagstep, end + 1, self.lagstep)
-            )
-
-        if self.method in ["direct", "fft"]:
-            ics = np.zeros((nlags - 1, nfeatures, nfeatures))
-            for n, param in enumerate(params):
-                ics[n] = utils.ic_all(trajs, param, mode=self.method)
-
-        elif self.method == "fft-all":
-            ics = utils.batch_ic_all(trajs, params)
-
-        else:
-            raise ValueError("method must be 'direct', 'fft', or 'fft-all")
-
         for i in range(nlags):
-            ic = utils.ct_all(trajs, self.lags[i])
+            ic = utils.compute_ic(
+                trajs, self.lags[i], cutlag, weights, mode=self.method
+            )
+            if self.adjust:
+                c0 = utils.compute_c0(
+                    trajs, self.lags[i], cutlag, weights, method=self.method
+                )
+                denom = 1
             evals, evecs = utils.symeig(ic, c0, nevecs)
             self.evals[i, i] = evals
             self.evecs[i, i] = evecs
@@ -654,16 +714,23 @@ class LinearIVACScan:
             )
             for j in range(i + 1, nlags):
                 ic += ics[j - 1]
-                evals, evecs = utils.symeig(ic, c0, nevecs)
+                if self.adjust:
+                    count = (self.lags[j] - self.lags[j - 1]) // self.lagstep
+                    c0 += c0s[j - 1] * count
+                    denom += count
+                evals, evecs = utils.symeig(ic, c0 / denom, nevecs)
                 self.evals[i, j] = evals
                 self.evecs[i, j] = evecs
                 self.its[i, j] = _ivac_its(
                     evals, self.lags[i], self.lags[j], self.lagstep
                 )
 
-        self.cov = c0
+        if self.adjust:
+            self.cov = c0
+        else:
+            self.cov = None
         self.trajs = trajs
-        self.weights = None
+        self.weights = weights
 
     def __getitem__(self, lags):
         """Get a fitted LinearIVAC with the specified lag times.

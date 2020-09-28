@@ -1,3 +1,4 @@
+import itertools
 import numpy as np
 import numba as nb
 from scipy import linalg, signal
@@ -78,6 +79,43 @@ def solve_stationary(a, b=None):
 
 # -----------------------------------------------------------------------------
 # calculation of single correlation matrices
+
+
+def compute_ic(trajs, lags, cutlag=None, weights=None, mode=None):
+    lags = np.squeeze(lags)
+    assert lags.ndim in [0, 1]
+    if cutlag is None:
+        assert weights is None
+        if lags.ndim == 0:
+            return ct_all(trajs, lags)
+        else:
+            return ic_all(trajs, lags, mode)
+    else:
+        if lags.ndim == 0:
+            return ct_rt(trajs, cutlag, weights)
+        else:
+            return ic_rt(trajs, lags, cutlag, weights, mode)
+
+
+def compute_c0(trajs, lags=None, cutlag=None, weights=None, mode=None):
+    if lags is not None:
+        lags = np.squeeze(lags)
+        assert lags.ndim in [0, 1]
+    if cutlag is None:
+        assert weights is None
+        if lags is None:
+            return c0_all(trajs)
+        elif lags.ndim == 0:
+            return c0_all_adj_ct(trajs, lags)
+        else:
+            return c0_all_adj_ic(trajs, lags, mode)
+    else:
+        if lags is None:
+            return c0_rt(trajs, cutlag, weights)
+        elif lags.ndim == 0:
+            return c0_rt_adj_ct(trajs, lags, cutlag, weights)
+        else:
+            return c0_rt_adj_ic(trajs, lags, cutlag, weights, mode)
 
 
 def corr(
@@ -328,6 +366,67 @@ def _adj_rt_fft(weight, lags, cutlag):
 
 # -----------------------------------------------------------------------------
 # batch calculation of correlation matrices
+
+
+def batch_compute_ic(trajs, params, cutlag=None, weights=None, mode="direct"):
+    if np.asarray(params[0]).ndim == 0:
+        params = np.asarray(params)
+        assert params.ndim == 1
+        flag = True
+    else:
+        params = [np.asarray(param) for param in params]
+        assert np.all([param.ndim == 1 for param in params])
+        flag = False
+    if mode == "fft-all":
+        if cutlag is None:
+            assert weights is None
+            if flag:
+                return batch_ct_all(trajs, params)
+            else:
+                return batch_ic_all(trajs, params)
+        else:
+            if flag:
+                return batch_ct_rt(trajs, params, cutlag, weights)
+            else:
+                return batch_ic_rt(trajs, params, cutlag, weights)
+    return (
+        compute_ic(trajs, param, cutlag, weights, mode) for param in params
+    )
+
+
+def batch_compute_c0(
+    trajs, params=None, cutlag=None, weights=None, mode="direct"
+):
+    if params is None:
+        if cutlag is None:
+            assert weights is None
+            c0 = c0_all(trajs)
+        else:
+            c0 = c0_rt(trajs, cutlag, weights)
+        return itertools.repeat(c0)
+    if np.asarray(params[0]).ndim == 0:
+        params = np.asarray(params)
+        assert params.ndim == 1
+        flag = True
+    else:
+        params = [np.asarray(param) for param in params]
+        assert np.all([param.ndim == 1 for param in params])
+        flag = False
+    if mode == "fft-all":
+        if cutlag is None:
+            assert weights is None
+            mode = "fft"  # fall back to "fft"
+        else:
+            if flag:
+                return batch_c0_rt_adj_ct(trajs, params, cutlag, weights)
+            else:
+                return batch_c0_rt_adj_ic(trajs, params, cutlag, weights)
+    return (
+        compute_c0(trajs, param, cutlag, weights, mode) for param in params
+    )
+
+
+# helper functions
 
 
 def _batch_fft_all(x, y):
