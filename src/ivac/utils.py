@@ -81,7 +81,7 @@ def solve_stationary(a, b=None):
 # calculation of single correlation matrices
 
 
-def compute_ic(trajs, lags, cutlag=None, weights=None, mode="direct"):
+def compute_ic(trajs, lags, cutlag=None, weights=None, method="fft"):
     lags = np.squeeze(lags)
     assert lags.ndim in [0, 1]
     if cutlag is None:
@@ -89,15 +89,15 @@ def compute_ic(trajs, lags, cutlag=None, weights=None, mode="direct"):
         if lags.ndim == 0:
             return ct_all(trajs, lags)
         else:
-            return ic_all(trajs, lags, mode)
+            return ic_all(trajs, lags, method)
     else:
         if lags.ndim == 0:
             return ct_rt(trajs, lags, cutlag, weights)
         else:
-            return ic_rt(trajs, lags, cutlag, weights, mode)
+            return ic_rt(trajs, lags, cutlag, weights, method)
 
 
-def compute_c0(trajs, lags=None, cutlag=None, weights=None, mode="direct"):
+def compute_c0(trajs, lags=None, cutlag=None, weights=None, method="fft"):
     if lags is not None:
         lags = np.squeeze(lags)
         assert lags.ndim in [0, 1]
@@ -108,14 +108,14 @@ def compute_c0(trajs, lags=None, cutlag=None, weights=None, mode="direct"):
         elif lags.ndim == 0:
             return c0_all_adj_ct(trajs, lags)
         else:
-            return c0_all_adj_ic(trajs, lags, mode)
+            return c0_all_adj_ic(trajs, lags, method)
     else:
         if lags is None:
             return c0_rt(trajs, cutlag, weights)
         elif lags.ndim == 0:
             return c0_rt_adj_ct(trajs, lags, cutlag, weights)
         else:
-            return c0_rt_adj_ic(trajs, lags, cutlag, weights, mode)
+            return c0_rt_adj_ic(trajs, lags, cutlag, weights, method)
 
 
 def corr(
@@ -182,10 +182,10 @@ def delay(lag):
     return func
 
 
-def integrate_all(lags, weights, mode="direct"):
+def integrate_all(lags, weights, method="fft"):
     """Create a function for IVAC's integrated correlation matrix."""
 
-    if mode == "direct":
+    if method == "direct":
 
         def func(traj, length):
             iy = np.zeros_like(traj[:length])
@@ -194,7 +194,7 @@ def integrate_all(lags, weights, mode="direct"):
                     iy[: length - lag] += weight * traj[lag:length]
             return iy
 
-    elif mode == "fft":
+    elif method == "fft":
 
         minlag = min(lags)
         maxlag = max(lags)
@@ -210,15 +210,15 @@ def integrate_all(lags, weights, mode="direct"):
             return iy
 
     else:
-        raise ValueError("mode must be 'direct' or 'fft'")
+        raise ValueError("method must be 'direct' or 'fft'")
 
     return func
 
 
-def integrate(lags, mode="direct"):
+def integrate(lags, method="fft"):
     """Create a function that integrates a trajectory over lag times."""
 
-    if mode == "direct":
+    if method == "direct":
 
         def func(traj, length):
             result = np.zeros_like(traj[:length])
@@ -226,7 +226,7 @@ def integrate(lags, mode="direct"):
                 result += traj[lag : length + lag]
             return result
 
-    elif mode == "fft":
+    elif method == "fft":
 
         minlag = min(lags)
         maxlag = max(lags)
@@ -239,7 +239,7 @@ def integrate(lags, mode="direct"):
             return signal.fftconvolve(traj, window, mode="valid", axes=0)
 
     else:
-        raise ValueError("mode must be 'direct' or 'fft'")
+        raise ValueError("method must be 'direct' or 'fft'")
 
     return func
 
@@ -259,15 +259,15 @@ def c0_all_adj_ct(trajs, lag):
     return c0_all_adj_ic(trajs, np.array([lag]))
 
 
-def ic_all(trajs, lags, mode="direct"):
+def ic_all(trajs, lags, method="fft"):
     lags = np.asarray(lags)
     lengths = np.array([len(traj) for traj in trajs])
     samples = np.sum(np.maximum(lengths[None, :] - lags[:, None], 0), axis=-1)
     weights = np.sum(lengths) / samples
-    return corr(delay(0), integrate_all(lags, weights, mode=mode), trajs)
+    return corr(delay(0), integrate_all(lags, weights, method=method), trajs)
 
 
-def c0_all_adj_ic(trajs, lags, mode="direct"):
+def c0_all_adj_ic(trajs, lags, method="fft"):
     lags = np.asarray(lags)
     lengths = np.array([len(traj) for traj in trajs])
     samples = np.sum(np.maximum(lengths[None, :] - lags[:, None], 0), axis=-1)
@@ -313,20 +313,24 @@ def c0_rt_adj_ct(trajs, lag, cutlag, weights):
     return c0_rt_adj_ic(trajs, [lag], cutlag, weights)
 
 
-def ic_rt(trajs, lags, cutlag, weights=None, mode="direct"):
+def ic_rt(trajs, lags, cutlag, weights=None, method="fft"):
     return corr(
-        delay(0), integrate(lags, mode=mode), trajs, cutlag, weights=weights
+        delay(0),
+        integrate(lags, method=method),
+        trajs,
+        cutlag,
+        weights=weights,
     )
 
 
-def c0_rt_adj_ic(trajs, lags, cutlag, weights, mode="direct"):
+def c0_rt_adj_ic(trajs, lags, cutlag, weights, method="fft"):
     lags = np.asarray(lags)
-    if mode == "direct":
+    if method == "direct":
         weights = [_adj_rt_direct(weight, lags, cutlag) for weight in weights]
-    elif mode == "fft":
+    elif method == "fft":
         weights = [_adj_rt_fft(weight, lags, cutlag) for weight in weights]
     else:
-        raise ValueError("mode must be 'direct' or 'fft'")
+        raise ValueError("method must be 'direct' or 'fft'")
     return corr(delay(0), delay(0), trajs, weights=weights)
 
 
@@ -368,7 +372,7 @@ def _adj_rt_fft(weight, lags, cutlag):
 # batch calculation of correlation matrices
 
 
-def batch_compute_ic(trajs, params, cutlag=None, weights=None, mode="direct"):
+def batch_compute_ic(trajs, params, cutlag=None, weights=None, method="fft"):
     if np.asarray(params[0]).ndim == 0:
         params = np.asarray(params)
         assert params.ndim == 1
@@ -377,7 +381,7 @@ def batch_compute_ic(trajs, params, cutlag=None, weights=None, mode="direct"):
         params = [np.asarray(param) for param in params]
         assert np.all([param.ndim == 1 for param in params])
         flag = False
-    if mode == "fft-all":
+    if method == "fft-all":
         if cutlag is None:
             assert weights is None
             if flag:
@@ -390,12 +394,12 @@ def batch_compute_ic(trajs, params, cutlag=None, weights=None, mode="direct"):
             else:
                 return batch_ic_rt(trajs, params, cutlag, weights)
     return (
-        compute_ic(trajs, param, cutlag, weights, mode) for param in params
+        compute_ic(trajs, param, cutlag, weights, method) for param in params
     )
 
 
 def batch_compute_c0(
-    trajs, params=None, cutlag=None, weights=None, mode="direct"
+    trajs, params=None, cutlag=None, weights=None, method="fft"
 ):
     if params is None:
         if cutlag is None:
@@ -412,17 +416,17 @@ def batch_compute_c0(
         params = [np.asarray(param) for param in params]
         assert np.all([param.ndim == 1 for param in params])
         flag = False
-    if mode == "fft-all":
+    if method == "fft-all":
         if cutlag is None:
             assert weights is None
-            mode = "fft"  # fall back to "fft"
+            method = "fft"  # fall back to "fft"
         else:
             if flag:
                 return batch_c0_rt_adj_ct(trajs, params, cutlag, weights)
             else:
                 return batch_c0_rt_adj_ic(trajs, params, cutlag, weights)
     return (
-        compute_c0(trajs, param, cutlag, weights, mode) for param in params
+        compute_c0(trajs, param, cutlag, weights, method) for param in params
     )
 
 

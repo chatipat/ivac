@@ -78,19 +78,19 @@ def check_corr_all(trajs, vac_lags, ivac_lags):
     # check C(tmin, tmax) against reference
     for lags in ivac_lags:
         assert np.allclose(
-            compute_ic(trajs, lags),
+            compute_ic(trajs, lags, method="direct"),
             ref.ic_all(trajs, lags),
         )
         assert np.allclose(
-            compute_ic(trajs, lags, mode="fft"),
+            compute_ic(trajs, lags, method="fft"),
             ref.ic_all(trajs, lags),
         )
         assert np.allclose(
-            compute_c0(trajs, lags),
+            compute_c0(trajs, lags, method="direct"),
             ref.c0_all_adj_ic(trajs, lags),
         )
         assert np.allclose(
-            compute_c0(trajs, lags, mode="fft"),
+            compute_c0(trajs, lags, method="fft"),
             ref.c0_all_adj_ic(trajs, lags),
         )
 
@@ -127,11 +127,11 @@ def check_corr_trunc(trajs, cutlag, vac_lags, ivac_lags):
     # check C(tmin, tmax) against reference
     for lags in ivac_lags:
         assert np.allclose(
-            compute_ic(trajs, lags, cutlag=cutlag),
+            compute_ic(trajs, lags, cutlag=cutlag, method="direct"),
             ref.ic_trunc(trajs, lags, cutlag),
         )
         assert np.allclose(
-            compute_ic(trajs, lags, cutlag=cutlag, mode="fft"),
+            compute_ic(trajs, lags, cutlag=cutlag, method="fft"),
             ref.ic_trunc(trajs, lags, cutlag),
         )
 
@@ -176,22 +176,26 @@ def check_corr_rt(trajs, cutlag, weights, vac_lags, ivac_lags):
     # check C(tmin, tmax) against reference
     for lags in ivac_lags:
         assert np.allclose(
-            compute_ic(trajs, lags, cutlag=cutlag, weights=weights),
-            ref.ic_rt(trajs, lags, cutlag, weights),
-        )
-        assert np.allclose(
             compute_ic(
-                trajs, lags, cutlag=cutlag, weights=weights, mode="fft"
+                trajs, lags, cutlag=cutlag, weights=weights, method="direct"
             ),
             ref.ic_rt(trajs, lags, cutlag, weights),
         )
         assert np.allclose(
-            compute_c0(trajs, lags, cutlag=cutlag, weights=weights),
+            compute_ic(
+                trajs, lags, cutlag=cutlag, weights=weights, method="fft"
+            ),
+            ref.ic_rt(trajs, lags, cutlag, weights),
+        )
+        assert np.allclose(
+            compute_c0(
+                trajs, lags, cutlag=cutlag, weights=weights, method="direct"
+            ),
             ref.c0_rt_adj_ic(trajs, lags, cutlag, weights),
         )
         assert np.allclose(
             compute_c0(
-                trajs, lags, cutlag=cutlag, weights=weights, mode="fft"
+                trajs, lags, cutlag=cutlag, weights=weights, method="fft"
             ),
             ref.c0_rt_adj_ic(trajs, lags, cutlag, weights),
         )
@@ -207,38 +211,38 @@ def check_corr_batch(trajs):
 
     # equilibrium IVAC
 
-    test = batch_compute_ic(trajs, lags, mode="fft-all")
+    test = batch_compute_ic(trajs, lags, method="fft-all")
     for i, lag in enumerate(lags):
         assert np.allclose(test[i], ref.ct_all(trajs, lag))
 
-    test = batch_compute_ic(trajs, params, mode="fft-all")
+    test = batch_compute_ic(trajs, params, method="fft-all")
     for i, param in enumerate(params):
         assert np.allclose(test[i], ref.ic_all(trajs, param))
 
     # nonequilibrium IVAC
 
-    test = batch_compute_ic(trajs, lags, cutlag=cutlag, mode="fft-all")
+    test = batch_compute_ic(trajs, lags, cutlag=cutlag, method="fft-all")
     for i, lag in enumerate(lags):
         assert np.allclose(test[i], ref.ct_trunc(trajs, lag, cutlag))
 
-    test = batch_compute_ic(trajs, params, cutlag=cutlag, mode="fft-all")
+    test = batch_compute_ic(trajs, params, cutlag=cutlag, method="fft-all")
     for i, param in enumerate(params):
         assert np.allclose(test[i], ref.ic_trunc(trajs, param, cutlag))
 
     test = batch_compute_ic(
-        trajs, lags, cutlag=cutlag, weights=weights, mode="fft-all"
+        trajs, lags, cutlag=cutlag, weights=weights, method="fft-all"
     )
     for i, lag in enumerate(lags):
         assert np.allclose(test[i], ref.ct_rt(trajs, lag, cutlag, weights))
 
     test = batch_compute_ic(
-        trajs, params, cutlag=cutlag, weights=weights, mode="fft-all"
+        trajs, params, cutlag=cutlag, weights=weights, method="fft-all"
     )
     for i, param in enumerate(params):
         assert np.allclose(test[i], ref.ic_rt(trajs, param, cutlag, weights))
 
     test = batch_compute_c0(
-        trajs, lags, cutlag=cutlag, weights=weights, mode="fft-all"
+        trajs, lags, cutlag=cutlag, weights=weights, method="fft-all"
     )
     for i, lag in enumerate(lags):
         assert np.allclose(
@@ -246,7 +250,7 @@ def check_corr_batch(trajs):
         )
 
     test = batch_compute_c0(
-        trajs, params, cutlag=cutlag, weights=weights, mode="fft-all"
+        trajs, params, cutlag=cutlag, weights=weights, method="fft-all"
     )
     for i, param in enumerate(params):
         assert np.allclose(

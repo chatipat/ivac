@@ -149,10 +149,10 @@ def test_ivac():
     assert np.allclose(test2.its[:nevecs], test.its[:nevecs])
     assert allclose_trajs_sign(test2.transform(trajs2), evecs)
 
-    # fft gives the same result
-    test2 = ivac.LinearIVAC(minlag, maxlag, nevecs=nevecs, method="fft")
+    # direct gives the same result
+    test2 = ivac.LinearIVAC(minlag, maxlag, nevecs=nevecs, method="direct")
     test2.fit(trajs)
-    assert test2.method == "fft"
+    assert test2.method == "direct"
     assert np.allclose(test2.evals[:nevecs], test.evals[:nevecs])
     assert np.allclose(test2.its[:nevecs], test.its[:nevecs])
     assert allclose_trajs_sign(test2.transform(trajs), evecs)

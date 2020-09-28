@@ -1,7 +1,7 @@
 import numba as nb
 import numpy as np
 import warnings
-from scipy import linalg, optimize
+from scipy import optimize
 from .utils import (
     preprocess_trajs,
     get_nfeatures,
@@ -286,7 +286,7 @@ class LinearIVAC:
         reweight=False,
         adjust=False,
         truncate=None,
-        method="direct",
+        method="fft",
     ):
         if minlag > maxlag:
             raise ValueError("minlag must be less than or equal to maxlag")
@@ -398,7 +398,7 @@ def _solve_ivac(
         lags,
         cutlag=cutlag,
         weights=weights,
-        mode=method,
+        method=method,
     )
 
     if adjust:
@@ -407,7 +407,7 @@ def _solve_ivac(
             lags,
             cutlag=cutlag,
             weights=weights,
-            mode=method,
+            method=method,
         )
     else:
         c0 = compute_c0(
@@ -415,7 +415,7 @@ def _solve_ivac(
             None,
             cutlag=cutlag,
             weights=weights,
-            mode=method,
+            method=method,
         )
 
     evals, evecs = symeig(ic, c0)
@@ -531,15 +531,15 @@ class LinearVACScan:
             cutlag = self.truncate
 
         cts = batch_compute_ic(
-            trajs, self.lags, cutlag, weights, mode=self.method
+            trajs, self.lags, cutlag, weights, method=self.method
         )
         if self.adjust:
             c0s = batch_compute_c0(
-                trajs, self.lags, cutlag, weights, mode=self.method
+                trajs, self.lags, cutlag, weights, method=self.method
             )
         else:
             c0s = batch_compute_c0(
-                trajs, None, cutlag, weights, mode=self.method
+                trajs, None, cutlag, weights, method=self.method
             )
 
         self.evals = np.empty((nlags, nevecs))
@@ -654,7 +654,7 @@ class LinearIVACScan:
         reweight=False,
         adjust=False,
         truncate=None,
-        method="direct",
+        method="fft",
     ):
         if np.any(lags[1:] < lags[:-1]):
             raise ValueError("lags must be nondecreasing")
@@ -715,16 +715,18 @@ class LinearIVACScan:
         ]
 
         ics = list(
-            batch_compute_ic(trajs, params, cutlag, weights, mode=self.method)
+            batch_compute_ic(
+                trajs, params, cutlag, weights, method=self.method
+            )
         )
         if self.adjust:
             c0s = list(
                 batch_compute_c0(
-                    trajs, params, cutlag, weights, mode=self.method
+                    trajs, params, cutlag, weights, method=self.method
                 )
             )
         else:
-            c0 = compute_c0(trajs, None, cutlag, weights, mode=self.method)
+            c0 = compute_c0(trajs, None, cutlag, weights, method=self.method)
             denom = 1
 
         self.evals = np.full((nlags, nlags, nevecs), np.nan)
@@ -733,11 +735,11 @@ class LinearIVACScan:
 
         for i in range(nlags):
             ic = compute_ic(
-                trajs, self.lags[i], cutlag, weights, mode=self.method
+                trajs, self.lags[i], cutlag, weights, method=self.method
             )
             if self.adjust:
                 c0 = compute_c0(
-                    trajs, self.lags[i], cutlag, weights, mode=self.method
+                    trajs, self.lags[i], cutlag, weights, method=self.method
                 )
                 denom = 1
             evals, evecs = symeig(ic, c0, nevecs)
@@ -805,7 +807,7 @@ class LinearIVACScan:
 # reweighting
 
 
-def _ivac_weights(trajs, lags, cutlag, method="direct"):
+def _ivac_weights(trajs, lags, cutlag, method="fft"):
     """Estimate weights for IVAC.
 
     Parameters
@@ -833,7 +835,7 @@ def _ivac_weights(trajs, lags, cutlag, method="direct"):
     """
     lags = np.atleast_1d(lags)
     assert lags.ndim == 1
-    ic = compute_ic(trajs, lags, cutlag=cutlag, mode=method)
+    ic = compute_ic(trajs, lags, cutlag=cutlag, method=method)
     c0 = compute_c0(trajs, cutlag=cutlag)
     w = solve_stationary(ic / len(lags), c0)
     return _build_weights(trajs, w, cutlag)
