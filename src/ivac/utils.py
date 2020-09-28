@@ -81,7 +81,7 @@ def solve_stationary(a, b=None):
 # calculation of single correlation matrices
 
 
-def compute_ic(trajs, lags, cutlag=None, weights=None, mode=None):
+def compute_ic(trajs, lags, cutlag=None, weights=None, mode="direct"):
     lags = np.squeeze(lags)
     assert lags.ndim in [0, 1]
     if cutlag is None:
@@ -92,12 +92,12 @@ def compute_ic(trajs, lags, cutlag=None, weights=None, mode=None):
             return ic_all(trajs, lags, mode)
     else:
         if lags.ndim == 0:
-            return ct_rt(trajs, cutlag, weights)
+            return ct_rt(trajs, lags, cutlag, weights)
         else:
             return ic_rt(trajs, lags, cutlag, weights, mode)
 
 
-def compute_c0(trajs, lags=None, cutlag=None, weights=None, mode=None):
+def compute_c0(trajs, lags=None, cutlag=None, weights=None, mode="direct"):
     if lags is not None:
         lags = np.squeeze(lags)
         assert lags.ndim in [0, 1]
