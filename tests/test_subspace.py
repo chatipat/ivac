@@ -77,7 +77,7 @@ def test_projection():
 
     trajs = make_data([1000, 1500, 2000], 0.1, 10)
 
-    vac = ivac.LinearVAC(5)
+    vac = ivac.LinearVAC(5, adjust=False)
     vac.fit(trajs)
     evecs = vac.transform(trajs)
 

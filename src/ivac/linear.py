@@ -95,7 +95,7 @@ class LinearVAC:
         nevecs=None,
         addones=False,
         reweight=False,
-        adjust=False,
+        adjust=True,
         truncate=None,
     ):
         if truncate is None:
@@ -284,7 +284,7 @@ class LinearIVAC:
         nevecs=None,
         addones=False,
         reweight=False,
-        adjust=False,
+        adjust=True,
         truncate=None,
         method="fft",
     ):
@@ -390,8 +390,8 @@ def _solve_ivac(
     lags,
     cutlag=None,
     weights=None,
-    adjust=False,
-    method=None,
+    adjust=True,
+    method="fft",
 ):
     ic = compute_ic(
         trajs,
@@ -480,7 +480,7 @@ class LinearVACScan:
         nevecs=None,
         addones=False,
         reweight=False,
-        adjust=False,
+        adjust=True,
         truncate=None,
         method="direct",
     ):
@@ -652,7 +652,7 @@ class LinearIVACScan:
         nevecs=None,
         addones=False,
         reweight=False,
-        adjust=False,
+        adjust=True,
         truncate=None,
         method="fft",
     ):

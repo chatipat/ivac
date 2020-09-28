@@ -193,7 +193,11 @@ def test_vac_scan():
             trajs = [traj[:, 1:] for traj in trajs]
         for method in ["direct", "fft-all"]:
             scan = ivac.LinearVACScan(
-                lags, nevecs=nevecs, addones=addones, method=method
+                lags,
+                nevecs=nevecs,
+                addones=addones,
+                adjust=False,
+                method=method,
             )
             scan.fit(trajs)
 
@@ -206,7 +210,9 @@ def test_vac_scan():
                 assert test.addones == addones
 
                 # check against LinearVAC reference
-                ref = ivac.LinearVAC(lag, nevecs=nevecs, addones=addones)
+                ref = ivac.LinearVAC(
+                    lag, nevecs=nevecs, addones=addones, adjust=False
+                )
                 ref.fit(trajs)
                 assert np.allclose(test.evals[:nevecs], ref.evals[:nevecs])
                 assert np.allclose(test.its[:nevecs], ref.its[:nevecs])
@@ -232,6 +238,7 @@ def test_ivac_scan():
                     lagstep=lagstep,
                     nevecs=nevecs,
                     addones=addones,
+                    adjust=False,
                     method=method,
                 )
                 scan.fit(trajs)
@@ -260,6 +267,7 @@ def test_ivac_scan():
                             maxlag,
                             lagstep=lagstep,
                             nevecs=nevecs,
+                            adjust=False,
                             addones=addones,
                         )
                         ref.fit(trajs)
