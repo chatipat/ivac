@@ -333,7 +333,7 @@ class LinearIVAC:
         if self.reweight:
             if weights is None:
                 weights = _ivac_weights(
-                    trajs, self.lags, self.truncate, mode=self.method
+                    trajs, self.lags, self.truncate, method=self.method
                 )
         else:
             if weights is not None:
