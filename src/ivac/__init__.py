@@ -3,6 +3,9 @@ from .linear import (
     LinearIVAC,
     LinearVACScan,
     LinearIVACScan,
+)
+
+from .subspace import (
     projection_distance,
     projection_distance_coeffs,
     orthonormalize,
