@@ -1,7 +1,9 @@
 import numpy as np
 from data import indicator_basis, ou_process
 from utils import allclose_sign, allclose_trajs, allclose_trajs_sign
+import pytest
 
+import ref_corr
 import ivac
 
 
@@ -11,7 +13,75 @@ def make_data(ns, dt, nbins):
 
 
 def sym(mat):
+    """Symmetrize matrix."""
     return 0.5 * (mat + mat.T)
+
+
+def fit_is_close(test, ref, nevecs=None):
+    """Check that fit results are similar."""
+
+    assert np.allclose(test.evals[:nevecs], ref.evals[:nevecs])
+    assert allclose_sign(test.evecs[:, :nevecs], ref.evecs[:, :nevecs])
+    assert np.allclose(test.its[:nevecs], ref.its[:nevecs])
+
+    # ignore c0 if not saved
+    if test.cov is not None and ref.cov is not None:
+        assert np.allclose(test.cov, ref.cov)
+
+
+def result_is_close(test, ref, trajs_test, trajs_ref=None, nevecs=None):
+    """Check that eigenvalues and transform results are similar."""
+
+    if trajs_ref is None:
+        trajs_ref = trajs_test
+
+    assert np.allclose(test.evals[:nevecs], ref.evals[:nevecs])
+    assert np.allclose(test.its[:nevecs], ref.its[:nevecs])
+
+    test_evecs = test.transform(trajs_test)
+    ref_evecs = ref.transform(trajs_ref)
+
+    # check that evecs have the right shape
+    assert all(evec.ndim == 2 for evec in test_evecs)
+    assert all(evec.ndim == 2 for evec in ref_evecs)
+    assert all(evec.shape[-1] == nevecs for evec in test_evecs)
+    assert all(evec.shape[-1] == nevecs for evec in ref_evecs)
+
+    assert allclose_trajs_sign(test_evecs, ref_evecs)
+
+
+def result_is_orthogonal(test):
+    """Check that training trajectories yield orthogonal eigenvectors.
+
+    For adjust=False only.
+    """
+    evecs = test.transform(test.trajs)
+    numer = []
+    denom = 0.0
+    if test.weights is None:
+        for evec in evecs:
+            numer.append(evec.T @ evec)
+            denom += len(evec)
+    else:
+        for evec, weight in zip(evecs, test.weights):
+            numer.append(evec.T @ (weight[:, None] * evec))
+            denom += np.sum(weight)
+    corr = np.sum(numer, axis=0) / denom
+    assert np.allclose(corr, np.identity(len(corr)))
+
+
+def result_has_ones(test):
+    """Check that the trivial eigenvector consists of ones.
+
+    For adjust=True only.
+    """
+    evecs = test.transform(test.trajs)
+    if evecs[0][0, 0] > 0.0:
+        sign = 1.0
+    else:
+        sign = -1.0
+    for evec in evecs:
+        assert np.allclose(sign * evec[:, 0], 1.0)
 
 
 def test_vac():
@@ -36,54 +106,52 @@ def test_vac():
     # different runs give the same result
     test2 = ivac.LinearVAC(lag, nevecs=nevecs)
     test2.fit(trajs)
-    assert np.allclose(test2.evals[:nevecs], test.evals[:nevecs])
-    assert np.allclose(test2.its[:nevecs], test.its[:nevecs])
-    assert allclose_sign(test2.evecs[:nevecs], test.evecs[:nevecs])
+    fit_is_close(test2, test, nevecs=nevecs)
     assert allclose_trajs_sign(test2.transform(trajs), evecs)
-
-    # evals
-    mat = sym(ivac.utils.ct_all(evecs, lag))
-    assert np.allclose(np.diag(mat), test.evals[:nevecs])
-    assert np.allclose(mat, np.diag(test.evals[:nevecs]))
 
     # idempotency
     test2.fit(trajs)
-    assert np.allclose(test2.evals[:nevecs], test.evals[:nevecs])
-    assert np.allclose(test2.its[:nevecs], test.its[:nevecs])
-    assert allclose_sign(test2.evecs[:nevecs], test.evecs[:nevecs])
-    assert allclose_trajs_sign(test2.transform(trajs), evecs)
+    fit_is_close(test2, test, nevecs=nevecs)
+    result_is_close(test2, test, trajs, nevecs=nevecs)
+
+    # adjust=True tests
+    result_has_ones(test)
+
+    # adjust=False tests
+    test2 = ivac.LinearVAC(lag, adjust=False, nevecs=nevecs)
+    test2.fit(trajs)
+    evecs2 = test2.transform(trajs)
+    # orthogonal results for adjust=False
+    result_is_orthogonal(test2)
+    # evals for adjust=False
+    mat = sym(ref_corr.ct_all(evecs2, lag))
+    assert np.allclose(np.diag(mat), test2.evals[:nevecs])
+    assert np.allclose(mat, np.diag(test2.evals[:nevecs]))
 
     # addones gives the same result
     trajs2 = [traj[:, 1:] for traj in trajs]
     test2 = ivac.LinearVAC(lag, nevecs=nevecs, addones=True)
     test2.fit(trajs2)
     assert test2.addones == True
-    assert np.allclose(test2.evals[:nevecs], test.evals[:nevecs])
-    assert np.allclose(test2.its[:nevecs], test.its[:nevecs])
-    assert allclose_trajs_sign(test2.transform(trajs2), evecs)
+
+    result_is_close(test2, test, trajs2, trajs, nevecs=nevecs)
 
     # trajectory order doesn't matter
     test2 = ivac.LinearVAC(lag, nevecs=nevecs)
     test2.fit(trajs[::-1])
-    assert np.allclose(test2.evals[:nevecs], test.evals[:nevecs])
-    assert np.allclose(test2.its[:nevecs], test.its[:nevecs])
-    assert allclose_trajs_sign(test2.transform(trajs), evecs)
+    result_is_close(test2, test, trajs, nevecs=nevecs)
 
     # scaling of features doesn't matter
     trajs2 = [2.0 * traj for traj in trajs]
     test2 = ivac.LinearVAC(lag, nevecs=nevecs)
     test2.fit(trajs2)
-    assert np.allclose(test2.evals[:nevecs], test.evals[:nevecs])
-    assert np.allclose(test2.its[:nevecs], test.its[:nevecs])
-    assert allclose_trajs_sign(test2.transform(trajs2), evecs)
+    result_is_close(test2, test, trajs2, trajs, nevecs=nevecs)
 
     # order of features doesn't matter
     trajs2 = [traj[:, ::-1] for traj in trajs]
     test2 = ivac.LinearVAC(lag, nevecs=nevecs)
     test2.fit(trajs2)
-    assert np.allclose(test2.evals[:nevecs], test.evals[:nevecs])
-    assert np.allclose(test2.its[:nevecs], test.its[:nevecs])
-    assert allclose_trajs_sign(test2.transform(trajs2), evecs)
+    result_is_close(test2, test, trajs2, trajs, nevecs=nevecs)
 
 
 def test_ivac():
@@ -123,9 +191,7 @@ def test_ivac():
     # different runs give the same result
     test2 = ivac.LinearIVAC(minlag, maxlag, nevecs=nevecs)
     test2.fit(trajs)
-    assert np.allclose(test2.evals[:nevecs], test.evals[:nevecs])
-    assert np.allclose(test2.its[:nevecs], test.its[:nevecs])
-    assert allclose_sign(test2.evecs[:nevecs], test.evecs[:nevecs])
+    fit_is_close(test2, test, nevecs=nevecs)
     assert allclose_trajs_sign(test2.transform(trajs), evecs)
 
     # evals
@@ -145,40 +211,30 @@ def test_ivac():
     test2 = ivac.LinearIVAC(minlag, maxlag, nevecs=nevecs, addones=True)
     test2.fit(trajs2)
     assert test2.addones == True
-    assert np.allclose(test2.evals[:nevecs], test.evals[:nevecs])
-    assert np.allclose(test2.its[:nevecs], test.its[:nevecs])
-    assert allclose_trajs_sign(test2.transform(trajs2), evecs)
+    result_is_close(test2, test, trajs2, trajs, nevecs=nevecs)
 
     # direct gives the same result
     test2 = ivac.LinearIVAC(minlag, maxlag, nevecs=nevecs, method="direct")
     test2.fit(trajs)
     assert test2.method == "direct"
-    assert np.allclose(test2.evals[:nevecs], test.evals[:nevecs])
-    assert np.allclose(test2.its[:nevecs], test.its[:nevecs])
-    assert allclose_trajs_sign(test2.transform(trajs), evecs)
+    result_is_close(test2, test, trajs, nevecs=nevecs)
 
     # trajectory order doesn't matter
     test2 = ivac.LinearIVAC(minlag, maxlag, nevecs=nevecs)
     test2.fit(trajs[::-1])
-    assert np.allclose(test2.evals[:nevecs], test.evals[:nevecs])
-    assert np.allclose(test2.its[:nevecs], test.its[:nevecs])
-    assert allclose_trajs_sign(test2.transform(trajs), evecs)
+    result_is_close(test2, test, trajs, nevecs=nevecs)
 
     # scaling of features doesn't matter
     trajs2 = [2.0 * traj for traj in trajs]
     test2 = ivac.LinearIVAC(minlag, maxlag, nevecs=nevecs)
     test2.fit(trajs2)
-    assert np.allclose(test2.evals[:nevecs], test.evals[:nevecs])
-    assert np.allclose(test2.its[:nevecs], test.its[:nevecs])
-    assert allclose_trajs_sign(test2.transform(trajs2), evecs)
+    result_is_close(test2, test, trajs2, trajs, nevecs=nevecs)
 
     # order of features doesn't matter
     trajs2 = [traj[:, ::-1] for traj in trajs]
     test2 = ivac.LinearIVAC(minlag, maxlag, nevecs=nevecs)
     test2.fit(trajs2)
-    assert np.allclose(test2.evals[:nevecs], test.evals[:nevecs])
-    assert np.allclose(test2.its[:nevecs], test.its[:nevecs])
-    assert allclose_trajs_sign(test2.transform(trajs2), evecs)
+    result_is_close(test2, test, trajs2, trajs, nevecs=nevecs)
 
 
 def test_vac_scan():
@@ -214,11 +270,7 @@ def test_vac_scan():
                     lag, nevecs=nevecs, addones=addones, adjust=False
                 )
                 ref.fit(trajs)
-                assert np.allclose(test.evals[:nevecs], ref.evals[:nevecs])
-                assert np.allclose(test.its[:nevecs], ref.its[:nevecs])
-                assert allclose_sign(
-                    test.evecs[:, :nevecs], ref.evecs[:, :nevecs]
-                )
+                fit_is_close(test, ref, nevecs=nevecs)
 
 
 def test_ivac_scan():
@@ -271,10 +323,4 @@ def test_ivac_scan():
                             addones=addones,
                         )
                         ref.fit(trajs)
-                        assert np.allclose(
-                            test.evals[:nevecs], ref.evals[:nevecs]
-                        )
-                        assert np.allclose(test.its[:nevecs], ref.its[:nevecs])
-                        assert allclose_sign(
-                            test.evecs[:, :nevecs], ref.evecs[:, :nevecs]
-                        )
+                        fit_is_close(test, ref, nevecs=nevecs)
