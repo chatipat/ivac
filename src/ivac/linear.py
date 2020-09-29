@@ -96,25 +96,18 @@ class LinearVAC:
         addones=False,
         reweight=False,
         adjust=True,
-        truncate=None,
+        cutlag=None,
     ):
-        if truncate is None:
-            truncate = reweight
-        if truncate is True:
-            truncate = lag
-        if truncate is not False and truncate < lag:
-            raise ValueError("truncate is less than lag")
-        if reweight and truncate is False:
-            raise ValueError(
-                "reweighting is only supported for mode 'truncate'"
-            )
-
+        if reweight and cutlag is None:
+            cutlag = lag
+        if cutlag is not None and cutlag < lag:
+            raise ValueError("cutlag is less than lag")
         self.lag = lag
         self.nevecs = nevecs
         self.addones = addones
         self.reweight = reweight
         self.adjust = adjust
-        self.truncate = truncate
+        self.cutlag = cutlag
 
     def fit(self, trajs, weights=None):
         """Compute VAC results from input trajectories.
@@ -130,14 +123,9 @@ class LinearVAC:
         """
         trajs = preprocess_trajs(trajs, addones=self.addones)
 
-        if self.truncate is False:
-            cutlag = None
-        else:
-            cutlag = self.truncate
-
         if self.reweight:
             if weights is None:
-                weights = _ivac_weights(trajs, self.lag, cutlag)
+                weights = _ivac_weights(trajs, self.lag, self.cutlag)
         else:
             if weights is not None:
                 raise ValueError("weights provided but not reweighting")
@@ -145,7 +133,7 @@ class LinearVAC:
         c0, evals, evecs = _solve_ivac(
             trajs,
             self.lag,
-            cutlag=cutlag,
+            cutlag=self.cutlag,
             weights=weights,
             adjust=self.adjust,
         )
@@ -285,23 +273,17 @@ class LinearIVAC:
         addones=False,
         reweight=False,
         adjust=True,
-        truncate=None,
+        cutlag=None,
         method="fft",
     ):
         if minlag > maxlag:
             raise ValueError("minlag must be less than or equal to maxlag")
         if (maxlag - minlag) % lagstep != 0:
             raise ValueError("lag time interval must be a multiple of lagstep")
-        if truncate is None:
-            truncate = reweight
-        if truncate is True:
-            truncate = maxlag
-        if truncate is not False and truncate < maxlag:
-            raise ValueError("truncate is less than maxlag")
-        if reweight and truncate is False:
-            raise ValueError(
-                "reweighting is only supported for mode 'truncate'"
-            )
+        if reweight and cutlag is None:
+            cutlag = maxlag
+        if cutlag is not None and cutlag < maxlag:
+            raise ValueError("cutlag less than maxlag")
         if method not in ["direct", "fft"]:
             raise ValueError("method must be 'direct', or 'fft'")
 
@@ -313,7 +295,7 @@ class LinearIVAC:
         self.addones = addones
         self.reweight = reweight
         self.adjust = adjust
-        self.truncate = truncate
+        self.cutlag = cutlag
         self.method = method
 
     def fit(self, trajs, weights=None):
@@ -333,21 +315,16 @@ class LinearIVAC:
         if self.reweight:
             if weights is None:
                 weights = _ivac_weights(
-                    trajs, self.lags, self.truncate, method=self.method
+                    trajs, self.lags, self.cutlag, method=self.method
                 )
         else:
             if weights is not None:
                 raise ValueError("weights provided but not reweighting")
 
-        if self.truncate is False:
-            cutlag = None
-        else:
-            cutlag = self.truncate
-
         c0, evals, evecs = _solve_ivac(
             trajs,
             self.lags,
-            cutlag=cutlag,
+            cutlag=self.cutlag,
             weights=weights,
             adjust=self.adjust,
             method=self.method,
@@ -481,20 +458,14 @@ class LinearVACScan:
         addones=False,
         reweight=False,
         adjust=True,
-        truncate=None,
+        cutlag=None,
         method="direct",
     ):
         maxlag = np.max(lags)
-        if truncate is None:
-            truncate = reweight
-        if truncate is True:
-            truncate = maxlag
-        if truncate is not False and truncate < maxlag:
-            raise ValueError("truncate is less than maxlag")
-        if reweight and truncate is False:
-            raise ValueError(
-                "reweighting is only supported for mode 'truncate'"
-            )
+        if reweight and cutlag is None:
+            cutlag = maxlag
+        if cutlag is not None and cutlag < maxlag:
+            raise ValueError("cutlag less than maximum lag time")
         if method not in ["direct", "fft-all"]:
             raise ValueError("method must be 'direct' or 'fft-all'")
 
@@ -503,7 +474,7 @@ class LinearVACScan:
         self.addones = addones
         self.reweight = reweight
         self.adjust = adjust
-        self.truncate = truncate
+        self.cutlag = cutlag
         self.method = method
 
     def fit(self, trajs, weights=None):
@@ -525,21 +496,16 @@ class LinearVACScan:
         if nevecs is None:
             nevecs = nfeatures
 
-        if self.truncate is False:
-            cutlag = None
-        else:
-            cutlag = self.truncate
-
         cts = batch_compute_ic(
-            trajs, self.lags, cutlag, weights, method=self.method
+            trajs, self.lags, self.cutlag, weights, method=self.method
         )
         if self.adjust:
             c0s = batch_compute_c0(
-                trajs, self.lags, cutlag, weights, method=self.method
+                trajs, self.lags, self.cutlag, weights, method=self.method
             )
         else:
             c0s = batch_compute_c0(
-                trajs, None, cutlag, weights, method=self.method
+                trajs, None, self.cutlag, weights, method=self.method
             )
 
         self.evals = np.empty((nlags, nevecs))
@@ -653,7 +619,7 @@ class LinearIVACScan:
         addones=False,
         reweight=False,
         adjust=True,
-        truncate=None,
+        cutlag=None,
         method="fft",
     ):
         if np.any(lags[1:] < lags[:-1]):
@@ -663,16 +629,10 @@ class LinearIVACScan:
                 "lags time intervals must be multiples of lagstep"
             )
         maxlag = np.max(lags)
-        if truncate is None:
-            truncate = reweight
-        if truncate is True:
-            truncate = maxlag
-        if truncate is not False and truncate < maxlag:
-            raise ValueError("truncate is less than maxlag")
-        if reweight and truncate is False:
-            raise ValueError(
-                "reweighting is only supported for mode 'truncate'"
-            )
+        if reweight and cutlag is None:
+            cutlag = maxlag
+        if cutlag is not None and cutlag < maxlag:
+            raise ValueError("cutlag is less than maxlag")
         if method not in ["direct", "fft", "fft-all"]:
             raise ValueError("method must be 'direct', 'fft', or 'fft-all")
 
@@ -682,7 +642,7 @@ class LinearIVACScan:
         self.addones = addones
         self.reweight = reweight
         self.adjust = adjust
-        self.truncate = truncate
+        self.cutlag = cutlag
         self.method = method
 
     def fit(self, trajs, weights=None):
@@ -704,11 +664,6 @@ class LinearIVACScan:
         if nevecs is None:
             nevecs = nfeatures
 
-        if self.truncate is False:
-            cutlag = None
-        else:
-            cutlag = self.truncate
-
         params = [
             np.arange(start + self.lagstep, end + 1, self.lagstep)
             for start, end in zip(self.lags[:-1], self.lags[1:])
@@ -716,17 +671,19 @@ class LinearIVACScan:
 
         ics = list(
             batch_compute_ic(
-                trajs, params, cutlag, weights, method=self.method
+                trajs, params, self.cutlag, weights, method=self.method
             )
         )
         if self.adjust:
             c0s = list(
                 batch_compute_c0(
-                    trajs, params, cutlag, weights, method=self.method
+                    trajs, params, self.cutlag, weights, method=self.method
                 )
             )
         else:
-            c0 = compute_c0(trajs, None, cutlag, weights, method=self.method)
+            c0 = compute_c0(
+                trajs, None, self.cutlag, weights, method=self.method
+            )
             denom = 1
 
         self.evals = np.full((nlags, nlags, nevecs), np.nan)
@@ -735,11 +692,15 @@ class LinearIVACScan:
 
         for i in range(nlags):
             ic = compute_ic(
-                trajs, self.lags[i], cutlag, weights, method=self.method
+                trajs, self.lags[i], self.cutlag, weights, method=self.method
             )
             if self.adjust:
                 c0 = compute_c0(
-                    trajs, self.lags[i], cutlag, weights, method=self.method
+                    trajs,
+                    self.lags[i],
+                    self.cutlag,
+                    weights,
+                    method=self.method,
                 )
                 denom = 1
             evals, evecs = symeig(ic, c0, nevecs)
@@ -817,7 +778,7 @@ def _ivac_weights(trajs, lags, cutlag, method="fft"):
         The features must be able to represent constant features.
     lags : array-like of int
         Lag times at which to evaluate IVAC, in units of frames.
-    truncate : int
+    cutlag : int
         Number of frames to drop from the end of each trajectory.
         This must be greater than or equal to the maximum IVAC lag time.
     method : string, optional
@@ -835,19 +796,20 @@ def _ivac_weights(trajs, lags, cutlag, method="fft"):
     """
     lags = np.atleast_1d(lags)
     assert lags.ndim == 1
+    assert cutlag >= np.max(lags)
     ic = compute_ic(trajs, lags, cutlag=cutlag, method=method)
     c0 = compute_c0(trajs, cutlag=cutlag)
     w = solve_stationary(ic / len(lags), c0)
     return _build_weights(trajs, w, cutlag)
 
 
-def _build_weights(trajs, coeffs, truncate):
+def _build_weights(trajs, coeffs, cutlag):
     """Build weights from reweighting coefficients."""
     weights = []
     total = 0.0
     for traj in trajs:
         weight = traj @ coeffs
-        weight[len(traj) - truncate :] = 0.0
+        weight[len(traj) - cutlag :] = 0.0
         total += np.sum(weight)
         weights.append(weight)
     # normalize weights so that their sum is 1
