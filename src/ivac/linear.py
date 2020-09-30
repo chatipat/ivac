@@ -673,11 +673,12 @@ class LinearIVACScan:
                 )
                 denom = 1
             evals, evecs = symeig(ic, c0, nevecs)
-            self.evals[i, i] = evals
-            self.evecs[i, i] = evecs
-            self.its[i, i] = _ivac_its(
-                evals, self.lags[i], self.lags[i], self.lagstep
-            )
+            if self.lags[i] > 0:
+                self.evals[i, i] = evals
+                self.evecs[i, i] = evecs
+                self.its[i, i] = _ivac_its(
+                    evals, self.lags[i], self.lags[i], self.lagstep
+                )
             for j in range(i + 1, nlags):
                 ic += ics[j - 1]
                 if self.adjust:
@@ -845,25 +846,102 @@ def _ivac_its(evals, minlag, maxlag, lagstep=1):
 
     """
     its = np.full(len(evals), np.nan)
+
+    if minlag == 0:
+        # remove component corresponding to zero lag time
+        evals = evals - 1.0
+        minlag = lagstep
+
     for i, val in enumerate(evals):
         dlag = maxlag - minlag + lagstep
-        avg = val * lagstep / dlag
+        nlags = dlag / lagstep
+        assert nlags > 0
+        avg = val / nlags
         if avg >= 1.0:
             its[i] = np.inf
         elif avg > 0.0:
-            guess = -2.0 * np.log(avg) / (minlag + maxlag)
+            # eigenvalues are bound by
+            #   exp(-sigma * tmin) <= eval
+            # and
+            #   nlags * exp(-sigma * tmax) <= eval <= nlags * exp(-sigma * tmin)
+            lower = max(
+                0.0,
+                -np.log(val) / minlag,
+                -np.log(avg) / maxlag,
+            )
+            upper = -np.log(avg) / minlag
+
+            # make sure solution is inside bracket
+            lower *= 0.999
+            upper *= 1.001
+
             sol = optimize.root_scalar(
-                _ivac_its_f_p,
+                _ivac_its_f,
                 args=(val, minlag, dlag, lagstep),
-                method="newton",
-                x0=guess,
-                fprime=True,
+                method="brentq",
+                bracket=[lower, upper],
             )
             if sol.converged:
                 its[i] = 1.0 / sol.root
             else:
                 warnings.warn("implied timescale calculation did not converge")
     return its
+
+
+@nb.njit
+def _sigma2eval(sigma, minlag, dlag, lagstep=1):
+    """Compute the IVAC eigenvalue for an inverse implied timescale.
+
+    Parameters
+    ----------
+    sigma : float
+        Inverse implied timescale.
+
+    minlag : int
+        Minimum lag time in units of frames.
+
+    dlag : int
+        Number of frames in the interval from the minimum lag time
+        to the maximum lag time (inclusive).
+
+    lagstep : int, optional
+        Number of frames between adjacent lag times.
+        Lag times are given by minlag, minlag + lagstep, ..., maxlag.
+
+    """
+    return (
+        np.exp(-sigma * minlag)
+        * np.expm1(-sigma * dlag)
+        / np.expm1(-sigma * lagstep)
+    )
+
+
+@nb.njit
+def _ivac_its_f(sigma, val, minlag, dlag, lagstep=1):
+    """Objective function for IVAC implied timescale calculation.
+
+    Parameters
+    ----------
+    sigma : float
+        Inverse implied timescale.
+
+    val : float
+        IVAC eigenvalue.
+
+    minlag : int
+        Minimum lag time in units of frames.
+
+    dlag : int
+        Number of frames in the interval from the minimum lag time
+        to the maximum lag time (inclusive).
+
+    lagstep : int, optional
+        Number of frames between adjacent lag times.
+        Lag times are given by minlag, minlag + lagstep, ..., maxlag.
+
+    """
+    a = _sigma2eval(sigma, minlag, dlag, lagstep)
+    return a - val
 
 
 @nb.njit
@@ -890,11 +968,7 @@ def _ivac_its_f_p(sigma, val, minlag, dlag, lagstep=1):
         Lag times are given by minlag, minlag + lagstep, ..., maxlag.
 
     """
-    a = (
-        np.exp(-sigma * minlag)
-        * np.expm1(-sigma * dlag)
-        / np.expm1(-sigma * lagstep)
-    )
+    a = _sigma2eval(sigma, minlag, dlag, lagstep)
     b = (
         minlag
         + lagstep / np.expm1(sigma * lagstep)
