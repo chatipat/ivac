@@ -52,6 +52,39 @@ def trajs_matmul(trajs, coeffs):
     return result
 
 
+@nb.njit
+def find_cutlag(weight):
+    """Compute the maximum valid lag time from trajectory weights.
+
+    Parameters
+    ----------
+    weights : (n_frames,) ndarray
+        Weight of each configuration in a trajectory.
+
+    Returns
+    -------
+    int
+        Maximum valid lag time in units of frames.
+
+    """
+
+    last = len(weight) - 1  # index of last element
+
+    # index of first nonzero element in the reversed list
+    # is the number of zeros at the end
+    for lag in range(len(weight)):
+        if weight[last - lag] != 0.0:
+            return lag
+
+    return len(weight)  # all zeros
+
+
+def is_cutlag(weights):
+    """True if weights is given as an integer."""
+    weights = np.asarray(weights, dtype=object)
+    return weights.ndim == 0
+
+
 # -----------------------------------------------------------------------------
 # linear algebra
 
@@ -81,50 +114,55 @@ def solve_stationary(a, b=None):
 # calculation of single correlation matrices
 
 
-def compute_ic(trajs, lags, cutlag=None, weights=None, method="fft"):
+def compute_ic(trajs, lags, *, weights=None, method="fft"):
     lags = np.squeeze(lags)
     assert lags.ndim in [0, 1]
-    if cutlag is None:
-        assert weights is None
+    if weights is None:
         if lags.ndim == 0:
             return ct_all(trajs, lags)
         else:
             return ic_all(trajs, lags, method)
     else:
         if lags.ndim == 0:
-            return ct_rt(trajs, lags, cutlag, weights)
+            return ct_rt(trajs, lags, weights)
         else:
-            return ic_rt(trajs, lags, cutlag, weights, method)
+            return ic_rt(trajs, lags, weights, method)
 
 
-def compute_c0(trajs, lags=None, cutlag=None, weights=None, method="fft"):
+def compute_c0(trajs, *, lags=None, weights=None, method="fft"):
     if lags is not None:
         lags = np.squeeze(lags)
         assert lags.ndim in [0, 1]
-    if cutlag is None:
-        assert weights is None
+    if weights is None:
         if lags is None:
             return c0_all(trajs)
         elif lags.ndim == 0:
             return c0_all_adj_ct(trajs, lags)
         else:
-            return c0_all_adj_ic(trajs, lags, method)
+            return c0_all_adj_ic(trajs, lags)
     else:
         if lags is None:
-            return c0_rt(trajs, cutlag, weights)
+            return c0_rt(trajs, weights)
         elif lags.ndim == 0:
-            return c0_rt_adj_ct(trajs, lags, cutlag, weights)
+            return c0_rt_adj_ct(trajs, lags, weights)
         else:
-            return c0_rt_adj_ic(trajs, lags, cutlag, weights, method)
+            return c0_rt_adj_ic(trajs, lags, weights, method)
 
 
-def corr(
-    func1,
-    func2,
-    trajs,
-    maxlag=0,
-    weights=None,
-):
+# The weight parameter can be None, int, or List[ndarray].
+#
+# None means that the trajectories are sampled from equilibrium.
+#
+# List[ndarray] gives the weight of each frame. If a lag time is to be
+# applied, there must be at least that many frames with weight zero
+# at the end of the trajectory.
+#
+# int is the same as List[ndarray] with uniform weights, except that
+# the last int frames have weight zero. This is so that the maximum
+# lag time that can be applied is int.
+
+
+def corr(func1, func2, trajs, weights=0):
     """Compute a correlation matrix from trajectories.
 
     Parameters
@@ -135,10 +173,10 @@ def corr(
         and returning a trajectory of that length.
     trajs : list of (n_frames[i], n_features) ndarray
         List of featurized trajectories.
-    maxlag : int
-        Maximum lag time.
-    weights : list of (n_frames[i],) ndarray, optional
+    weights : int or list of (n_frames[i],) ndarray, optional
         Weight of trajectory starting at each configuration.
+        If int, assume uniform weights except for the last int frames,
+        which have zero weight.
 
     Returns
     -------
@@ -149,21 +187,26 @@ def corr(
     nfeatures = get_nfeatures(trajs)
     numer = np.zeros((nfeatures, nfeatures))
     denom = 0.0
-    if weights is None:
+    if is_cutlag(weights):
         for traj in trajs:
-            length = len(traj) - maxlag
+            length = len(traj) - weights
             if length > 0:
                 x = func1(traj, length)
                 y = func2(traj, length)
+                assert len(x) == length
+                assert len(y) == length
                 numer += x.T @ y
-                denom += len(x)
+                denom += length
     else:
         for traj, weight in zip(trajs, weights):
-            length = len(traj) - maxlag
+            length = len(traj) - find_cutlag(weight)
             if length > 0:
                 w = weight[:length]
                 x = func1(traj, length)
                 y = func2(traj, length)
+                assert len(w) == length
+                assert len(x) == length
+                assert len(y) == length
                 xw = x * w[:, None]
                 numer += xw.T @ y
                 denom += np.sum(w)
@@ -182,14 +225,14 @@ def delay(lag):
     return func
 
 
-def integrate_all(lags, weights, method="fft"):
+def integrate_all(lags, wlags, method):
     """Create a function for IVAC's integrated correlation matrix."""
 
     if method == "direct":
 
         def func(traj, length):
             iy = np.zeros_like(traj[:length])
-            for lag, weight in zip(lags, weights):
+            for lag, weight in zip(lags, wlags):
                 if length > lag:
                     iy[: length - lag] += weight * traj[lag:length]
             return iy
@@ -199,7 +242,7 @@ def integrate_all(lags, weights, method="fft"):
         minlag = min(lags)
         maxlag = max(lags)
         window = np.zeros(maxlag - minlag + 1)
-        window[lags - minlag] = weights
+        window[lags - minlag] = wlags
         window = window[::-1, None]
 
         def func(traj, length):
@@ -215,7 +258,7 @@ def integrate_all(lags, weights, method="fft"):
     return func
 
 
-def integrate(lags, method="fft"):
+def integrate(lags, method):
     """Create a function that integrates a trajectory over lag times."""
 
     if method == "direct":
@@ -256,24 +299,24 @@ def ct_all(trajs, lag):
 
 
 def c0_all_adj_ct(trajs, lag):
-    return c0_all_adj_ic(trajs, np.array([lag]))
+    return c0_all_adj_ic(trajs, [lag])
 
 
-def ic_all(trajs, lags, method="fft"):
+def ic_all(trajs, lags, method):
     lags = np.asarray(lags)
     lengths = np.array([len(traj) for traj in trajs])
     samples = np.sum(np.maximum(lengths[None, :] - lags[:, None], 0), axis=-1)
-    weights = np.sum(lengths) / samples
-    return corr(delay(0), integrate_all(lags, weights, method=method), trajs)
+    wlags = np.sum(lengths) / samples
+    return corr(delay(0), integrate_all(lags, wlags, method), trajs)
 
 
-def c0_all_adj_ic(trajs, lags, method="fft"):
+def c0_all_adj_ic(trajs, lags):
     lags = np.asarray(lags)
     lengths = np.array([len(traj) for traj in trajs])
     samples = np.sum(np.maximum(lengths[None, :] - lags[:, None], 0), axis=-1)
     wlags = 1.0 / samples
     weights = [_adj_all(len(traj), lags, wlags) for traj in trajs]
-    return corr(delay(0), delay(0), trajs, weights=weights)
+    return corr(delay(0), delay(0), trajs, weights)
 
 
 @nb.njit
@@ -301,43 +344,37 @@ def _adj_all(wlen, lags, wlags):
 # nonequilibrium IVAC
 
 
-def c0_rt(trajs, cutlag, weights=None):
-    return corr(delay(0), delay(0), trajs, cutlag, weights=weights)
+def c0_rt(trajs, weights):
+    return corr(delay(0), delay(0), trajs, weights)
 
 
-def ct_rt(trajs, lag, cutlag, weights=None):
-    return corr(delay(0), delay(lag), trajs, cutlag, weights=weights)
+def ct_rt(trajs, lag, weights):
+    return corr(delay(0), delay(lag), trajs, weights)
 
 
-def c0_rt_adj_ct(trajs, lag, cutlag, weights):
-    return c0_rt_adj_ic(trajs, [lag], cutlag, weights)
+def c0_rt_adj_ct(trajs, lag, weights):
+    return c0_rt_adj_ic(trajs, [lag], weights, "direct")
 
 
-def ic_rt(trajs, lags, cutlag, weights=None, method="fft"):
-    return corr(
-        delay(0),
-        integrate(lags, method=method),
-        trajs,
-        cutlag,
-        weights=weights,
-    )
+def ic_rt(trajs, lags, weights, method="fft"):
+    return corr(delay(0), integrate(lags, method), trajs, weights)
 
 
-def c0_rt_adj_ic(trajs, lags, cutlag, weights, method="fft"):
+def c0_rt_adj_ic(trajs, lags, weights, method):
     lags = np.asarray(lags)
     if method == "direct":
-        weights = [_adj_rt_direct(weight, lags, cutlag) for weight in weights]
+        weights = [_adj_rt_direct(weight, lags) for weight in weights]
     elif method == "fft":
-        weights = [_adj_rt_fft(weight, lags, cutlag) for weight in weights]
+        weights = [_adj_rt_fft(weight, lags) for weight in weights]
     else:
         raise ValueError("method must be 'direct' or 'fft'")
-    return corr(delay(0), delay(0), trajs, weights=weights)
+    return corr(delay(0), delay(0), trajs, weights)
 
 
 @nb.njit
-def _adj_rt_direct(weight, lags, cutlag):
+def _adj_rt_direct(weight, lags):
     result = np.zeros(len(weight))
-    length = len(weight) - cutlag
+    length = len(weight) - find_cutlag(weight)
     if length > 0:
         nlags = len(lags)
         for i in range(length):
@@ -349,9 +386,9 @@ def _adj_rt_direct(weight, lags, cutlag):
     return result
 
 
-def _adj_rt_fft(weight, lags, cutlag):
+def _adj_rt_fft(weight, lags):
     result = np.zeros(len(weight))
-    length = len(weight) - cutlag
+    length = len(weight) - find_cutlag(weight)
     if length > 0:
 
         # create window
@@ -372,7 +409,8 @@ def _adj_rt_fft(weight, lags, cutlag):
 # batch calculation of correlation matrices
 
 
-def batch_compute_ic(trajs, params, cutlag=None, weights=None, method="fft"):
+def batch_compute_ic(trajs, params, *, weights=None, method="fft"):
+
     if np.asarray(params[0]).ndim == 0:
         params = np.asarray(params)
         assert params.ndim == 1
@@ -381,33 +419,34 @@ def batch_compute_ic(trajs, params, cutlag=None, weights=None, method="fft"):
         params = [np.asarray(param) for param in params]
         assert np.all([param.ndim == 1 for param in params])
         flag = False
+
     if method == "fft-all":
-        if cutlag is None:
-            assert weights is None
+        if weights is None:
             if flag:
                 return batch_ct_all(trajs, params)
             else:
                 return batch_ic_all(trajs, params)
         else:
             if flag:
-                return batch_ct_rt(trajs, params, cutlag, weights)
+                return batch_ct_rt(trajs, params, weights)
             else:
-                return batch_ic_rt(trajs, params, cutlag, weights)
+                return batch_ic_rt(trajs, params, weights)
+
     return (
-        compute_ic(trajs, param, cutlag, weights, method) for param in params
+        compute_ic(trajs, param, weights=weights, method=method)
+        for param in params
     )
 
 
-def batch_compute_c0(
-    trajs, params=None, cutlag=None, weights=None, method="fft"
-):
+def batch_compute_c0(trajs, *, params=None, weights=None, method="fft"):
+
     if params is None:
-        if cutlag is None:
-            assert weights is None
+        if weights is None:
             c0 = c0_all(trajs)
         else:
-            c0 = c0_rt(trajs, cutlag, weights)
+            c0 = c0_rt(trajs, weights)
         return itertools.repeat(c0)
+
     if np.asarray(params[0]).ndim == 0:
         params = np.asarray(params)
         assert params.ndim == 1
@@ -416,17 +455,19 @@ def batch_compute_c0(
         params = [np.asarray(param) for param in params]
         assert np.all([param.ndim == 1 for param in params])
         flag = False
+
     if method == "fft-all":
-        if cutlag is None:
-            assert weights is None
+        if weights is None:
             method = "fft"  # fall back to "fft"
         else:
             if flag:
-                return batch_c0_rt_adj_ct(trajs, params, cutlag, weights)
+                return batch_c0_rt_adj_ct(trajs, params, weights)
             else:
-                return batch_c0_rt_adj_ic(trajs, params, cutlag, weights)
+                return batch_c0_rt_adj_ic(trajs, params, weights)
+
     return (
-        compute_c0(trajs, param, cutlag, weights, method) for param in params
+        compute_c0(trajs, lags=param, weights=weights, method=method)
+        for param in params
     )
 
 
@@ -497,27 +538,33 @@ def batch_ic_all(trajs, params):
 # nonequilibrium IVAC
 
 
-def batch_ct_rt(trajs, lags, cutlag, weights=None):
+def batch_ct_rt(trajs, lags, weights):
     minlag, maxlag = min(lags), max(lags)
     nfeatures = get_nfeatures(trajs)
     numer = np.zeros((len(lags), nfeatures, nfeatures))
     denom = 0.0
-    if weights is None:
+    if is_cutlag(weights):
         for traj in trajs:
-            length = len(traj) - cutlag
+            length = len(traj) - weights
             if length > 0:
                 x = traj[:length]
                 y = traj[minlag : length + maxlag]
+                assert len(x) == length
+                assert len(y) == length + maxlag - minlag
                 conv = _batch_fft_trunc(x, y)
+                assert len(conv) == maxlag - minlag + 1
                 numer += conv[lags - minlag]
                 denom += length
     else:
         for traj, weight in zip(trajs, weights):
-            length = len(traj) - cutlag
+            length = len(traj) - find_cutlag(weight)
             if length > 0:
                 w = weight[:length]
                 x = traj[:length]
                 y = traj[minlag : length + maxlag]
+                assert len(w) == length
+                assert len(x) == length
+                assert len(y) == length + maxlag - minlag
                 conv = _batch_fft_trunc(x * w[:, None], y)
                 assert len(conv) == maxlag - minlag + 1
                 numer += conv[lags - minlag]
@@ -525,46 +572,55 @@ def batch_ct_rt(trajs, lags, cutlag, weights=None):
     return numer / denom
 
 
-def batch_ic_rt(trajs, params, cutlag, weights=None):
+def batch_ic_rt(trajs, params, weights):
     all_lags = np.concatenate(params)
     minlag, maxlag = min(all_lags), max(all_lags)
     nfeatures = get_nfeatures(trajs)
     numer = np.zeros((len(params), nfeatures, nfeatures))
     denom = 0.0
-    if weights is None:
+    if is_cutlag(weights):
         for traj in trajs:
-            length = len(traj) - cutlag
+            length = len(traj) - weights
             if length > 0:
                 x = traj[:length]
                 y = traj[minlag : length + maxlag]
+                assert len(x) == length
+                assert len(y) == length + maxlag - minlag
                 conv = _batch_fft_trunc(x, y)
+                assert len(conv) == maxlag - minlag + 1
                 for n, lags in enumerate(params):
                     numer[n] += np.sum(conv[lags - minlag], axis=0)
                 denom += length
     else:
         for traj, weight in zip(trajs, weights):
-            length = len(traj) - cutlag
+            length = len(traj) - find_cutlag(weight)
             if length > 0:
                 w = weight[:length]
                 x = traj[:length]
                 y = traj[minlag : length + maxlag]
+                assert len(w) == length
+                assert len(x) == length
+                assert len(y) == length + maxlag - minlag
                 conv = _batch_fft_trunc(x * w[:, None], y)
+                assert len(conv) == maxlag - minlag + 1
                 for n, lags in enumerate(params):
                     numer[n] += np.sum(conv[lags - minlag], axis=0)
                 denom += np.sum(w)
     return numer / denom
 
 
-def batch_c0_rt_adj_ct(trajs, lags, cutlag, weights):
+def batch_c0_rt_adj_ct(trajs, lags, weights):
     maxlag = max(lags)
     nfeatures = get_nfeatures(trajs)
     numer = np.zeros((len(lags), nfeatures, nfeatures))
     denom = 0.0
     for traj, weight in zip(trajs, weights):
-        length = len(traj) - cutlag
+        length = len(traj) - find_cutlag(weight)
         if length > 0:
             w = weight[:length]
             y = traj[: length + maxlag]
+            assert len(w) == length
+            assert len(y) == length + maxlag
             conv = _batch_fft_trunc_adj(w, y)
             assert len(conv) == maxlag + 1
             numer += conv[0]
@@ -573,17 +629,19 @@ def batch_c0_rt_adj_ct(trajs, lags, cutlag, weights):
     return numer / denom
 
 
-def batch_c0_rt_adj_ic(trajs, params, cutlag, weights):
+def batch_c0_rt_adj_ic(trajs, params, weights):
     all_lags = np.concatenate(params)
     maxlag = max(all_lags)
     nfeatures = get_nfeatures(trajs)
     numer = np.zeros((len(params), nfeatures, nfeatures))
     denom = 0.0
     for traj, weight in zip(trajs, weights):
-        length = len(traj) - cutlag
+        length = len(traj) - find_cutlag(weight)
         if length > 0:
             w = weight[:length]
             y = traj[: length + maxlag]
+            assert len(w) == length
+            assert len(y) == length + maxlag
             conv = _batch_fft_trunc_adj(w, y)
             assert len(conv) == maxlag + 1
             numer += conv[0]

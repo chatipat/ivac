@@ -195,7 +195,7 @@ def test_ivac():
     assert allclose_trajs_sign(test2.transform(trajs), evecs)
 
     # evals
-    mat = sym(ivac.utils.ic_all(evecs, lags=np.arange(minlag, maxlag + 1)))
+    mat = sym(ref_corr.ic_all(evecs, lags=np.arange(minlag, maxlag + 1)))
     assert np.allclose(np.diag(mat), test.evals[:nevecs])
     assert np.allclose(mat, np.diag(test.evals[:nevecs]))
 
