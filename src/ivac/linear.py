@@ -881,7 +881,7 @@ def _ivac_its(evals, minlag, maxlag, lagstep=1):
                 method="brentq",
                 bracket=[lower, upper],
             )
-            if sol.converged:
+            if sol.converged and sol.root > 0.0:
                 its[i] = 1.0 / sol.root
             else:
                 warnings.warn("implied timescale calculation did not converge")
