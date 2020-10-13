@@ -32,7 +32,7 @@ class LinearVAC:
     for eigenvalues :math:`\lambda_i`
     and eigenvector coefficients :math:`v_i`.
 
-    The covariance matrices are given by
+    The correlation matrices are given by
 
     .. math::
 
@@ -43,6 +43,11 @@ class LinearVAC:
     where :math:`\phi_i` are the input features
     and :math:`\tau` is the lag time parameter.
 
+    This implementation assumes that the constant feature can be
+    represented by a linear combination of the other features.
+    If this is not the case, addones=True will augment the input
+    features with the constant feature.
+
     Parameters
     ----------
     lag : int
@@ -50,23 +55,18 @@ class LinearVAC:
     nevecs : int, optional
         Number of eigenvectors (including the trivial eigenvector)
         to compute.
-        If None, return the maximum possible number of eigenvectors
+        If None, use the maximum possible number of eigenvectors
         (n_features).
     addones : bool, optional
         If True, add a feature of ones before solving VAC.
         This increases n_features by 1.
+        This should only be set to True if the constant feature
+        is not contained within the span of the input features.
     reweight : bool, optional
         If True, reweight trajectories to equilibrium.
     adjust : bool, optional
         If True, adjust :math:`C(0)` to ensure that the trivial
         eigenvector is exactly solved.
-    truncate : bool or int, optional
-        Truncate trajectories so that :math:`C(t)` and :math:`C(0)`
-        use the same number of data points.
-        If int, this is the number of data points removed.
-        If True, lag data points are removed.
-        By default, trajectories are not truncated
-        unless reweight is True.
 
     Attributes
     ----------
@@ -114,6 +114,15 @@ class LinearVAC:
         ----------
         trajs : list of (n_frames[i], n_features) ndarray
             List of featurized trajectories.
+        weights : int or list of (n_frames[i],) ndarray, optional
+            If int, the number of frames to drop from the end of each
+            trajectory, which must be greater than or equal to the VAC
+            lag time. This is equivalent to passing a list of uniform
+            weights but with the last int frames having zero weight.
+            If a list of ndarray, the weight of the trajectory starting
+            at each configuration. Note that the last frames of each
+            trajectory must have zero weight. This number of ending
+            frames with zero weight must be at least the VAC lag time.
 
         """
         trajs = preprocess_trajs(trajs, addones=self.addones)
@@ -188,6 +197,11 @@ class LinearIVAC:
     where :math:`\phi_i` are the input features
     and :math:`\tau` is the lag time parameter.
 
+    This implementation assumes that the constant feature can be
+    represented by a linear combination of the other features.
+    If this is not the case, addones=True will augment the input
+    features with the constant feature.
+
     Parameters
     ----------
     minlag : int
@@ -203,7 +217,7 @@ class LinearIVAC:
     nevecs : int, optional
         Number of eigenvectors (including the trivial eigenvector)
         to compute.
-        If None, return the maximum possible number of eigenvectors
+        If None, use the maximum possible number of eigenvectors
         (n_features).
     addones : bool, optional
         If True, add a feature of ones before solving VAC.
@@ -213,13 +227,6 @@ class LinearIVAC:
     adjust : bool, optional
         If True, adjust :math:`C(0)` to ensure that the trivial
         eigenvector is exactly solved.
-    truncate : bool or int, optional
-        Truncate trajectories so that each :math:`C(t)` and :math:`C(0)`
-        use the same number of data points.
-        If int, this is the number of data points removed.
-        If True, maxlag data points are removed.
-        By default, trajectories are not truncated
-        unless reweight is True.
     method : str, optional
         Method to compute the integrated covariance matrix.
         Currently, 'direct', 'fft' are supported.
@@ -296,6 +303,17 @@ class LinearIVAC:
         ----------
         trajs : list of (n_frames[i], n_features) ndarray
             List of featurized trajectories.
+        weights : int or list of (n_frames[i],) ndarray, optional
+            If int, the number of frames to drop from the end of each
+            trajectory, which must be greater than or equal to the
+            maximum IVAC lag time. This is equivalent to passing a list
+            of uniform weights but with the last int frames having zero
+            weight.
+            If a list of ndarray, the weight of the trajectory starting
+            at each configuration. Note that the last frames of each
+            trajectory must have zero weight. This number of ending
+            frames with zero weight must be at least the maximum IVAC
+            lag time.
 
         """
         trajs = preprocess_trajs(trajs, addones=self.addones)
@@ -355,6 +373,41 @@ def _solve_ivac(
     adjust=True,
     method="fft",
 ):
+    """Solve IVAC with the given parameters.
+
+    Parameters
+    ----------
+    trajs : list of (n_frames[i], n_features) ndarray
+        List of featurized trajectories.
+    lags : int or 1d array-like of int
+        VAC lag time or IVAC lag times, in units of frames.
+        For IVAC, this should be a list of lag times that will be used,
+        not the 2 or 3 values specifying the range.
+    weights : int or list of (n_frames[i],) ndarray, optional
+        If int, the number of frames to drop from the end of each
+        trajectory, which must be greater than or equal to the maximum
+        IVAC lag time. This is equivalent to passing a list of uniform
+        weights but with the last int frames having zero weight.
+        If a list of ndarray, the weight of the trajectory starting at
+        each configuration. Note that the last frames of each trajectory
+        must have zero weight. This number of ending frames with zero
+        weight must be at least the maximum IVAC lag time.
+    adjust : bool, optional
+        If True, adjust :math:`C(0)` to ensure that the trivial
+        eigenvector is exactly solved.
+    method : str, optional
+        Method to compute the integrated covariance matrix.
+        Currently, 'direct', 'fft' are supported.
+        Both 'direct' and 'fft' integrate features over lag times before
+        computing the correlation matrix.
+        Method 'direct' does so by summing the time-lagged features.
+        Its runtime increases linearly with the number of lag times.
+        Method 'fft' does so by performing an FFT convolution.
+        It takes around the same amount of time to run regardless
+        of the number of lag times, and is faster than 'direct' when
+        there is more than around 100 lag times.
+
+    """
     ic = compute_ic(trajs, lags, weights=weights, method=method)
 
     if adjust:
@@ -389,8 +442,8 @@ class LinearVACScan:
 
     Parameters
     ----------
-    lags : int
-        Lag times, in units of frames.
+    lag : int
+        Lag time, in units of frames.
     nevecs : int, optional
         Number of eigenvectors (including the trivial eigenvector)
         to compute.
@@ -399,6 +452,13 @@ class LinearVACScan:
     addones : bool, optional
         If True, add a feature of ones before solving VAC.
         This increases n_features by 1.
+        This should only be set to True if the constant feature
+        is not contained within the span of the input features.
+    reweight : bool, optional
+        If True, reweight trajectories to equilibrium.
+    adjust : bool, optional
+        If True, adjust :math:`C(0)` to ensure that the trivial
+        eigenvector is exactly solved.
     method : str, optional
         Method used to compute the time lagged covariance matrices.
         Currently supported methods are 'direct',
@@ -448,6 +508,15 @@ class LinearVACScan:
         ----------
         trajs : list of (n_frames[i], n_features) ndarray
             List of featurized trajectories.
+        weights : int or list of (n_frames[i],) ndarray, optional
+            If int, the number of frames to drop from the end of each
+            trajectory, which must be greater than or equal to the VAC
+            lag time. This is equivalent to passing a list of uniform
+            weights but with the last int frames having zero weight.
+            If a list of ndarray, the weight of the trajectory starting
+            at each configuration. Note that the last frames of each
+            trajectory must have zero weight. This number of ending
+            frames with zero weight must be at least the VAC lag time.
 
         """
         trajs = preprocess_trajs(trajs, addones=self.addones)
@@ -544,6 +613,11 @@ class LinearIVACScan:
     ----------
     lags : int
         Lag times, in units of frames.
+    lagstep : int, optional
+        Number of frames between each lag time.
+        This must evenly divide maxlag - minlag.
+        The integrated covariance matrix is computed using lag times
+        (minlag, minlag + lagstep, ..., maxlag)
     nevecs : int, optional
         Number of eigenvectors (including the trivial eigenvector)
         to compute.
@@ -552,6 +626,11 @@ class LinearIVACScan:
     addones : bool, optional
         If True, add a feature of ones before solving VAC.
         This increases n_features by 1.
+    reweight : bool, optional
+        If True, reweight trajectories to equilibrium.
+    adjust : bool, optional
+        If True, adjust :math:`C(0)` to ensure that the trivial
+        eigenvector is exactly solved.
     method : str, optional
         Method to compute the integrated covariance matrix.
         Currently, 'direct', 'fft', and 'fft-all' are supported.
@@ -618,6 +697,17 @@ class LinearIVACScan:
         ----------
         trajs : list of (n_frames[i], n_features) ndarray
             List of featurized trajectories.
+        weights : int or list of (n_frames[i],) ndarray, optional
+            If int, the number of frames to drop from the end of each
+            trajectory, which must be greater than or equal to the
+            maximum IVAC lag time. This is equivalent to passing a list
+            of uniform weights but with the last int frames having zero
+            weight.
+            If a list of ndarray, the weight of the trajectory starting
+            at each configuration. Note that the last frames of each
+            trajectory must have zero weight. This number of ending
+            frames with zero weight must be at least the maximum IVAC
+            lag time.
 
         """
         trajs = preprocess_trajs(trajs, addones=self.addones)
@@ -748,15 +838,21 @@ def _ivac_weights(trajs, lags, weights=None, method="fft"):
         The features must be able to represent constant features.
     lags : array-like of int
         Lag times at which to evaluate IVAC, in units of frames.
-    cutlag : int
-        Number of frames to drop from the end of each trajectory.
-        This must be greater than or equal to the maximum IVAC lag time.
+    weights : int or list of (n_frames[i],) ndarray, optional
+        If int, the number of frames to drop from the end of each
+        trajectory, which must be greater than or equal to the maximum
+        IVAC lag time. This is equivalent to passing a list of uniform
+        weights but with the last int frames having zero weight.
+        If a list of ndarray, the weight of the trajectory starting at
+        each configuration. Note that the last frames of each trajectory
+        must have zero weight. This number of ending frames with zero
+        weight must be at least the maximum IVAC lag time.
     method : string, optional
         Method to use for calculating the integrated correlation matrix.
-        Currently, 'direct' and 'fft' are supported.
-        The default method, 'direct', is usually faster for smaller
-        numbers of lag times. The speed of method 'fft' is mostly
-        independent of the number of lag times used.
+        Currently, 'direct' and 'fft' are supported. Method 'direct', is
+        usually faster for smaller numbers of lag times. The speed of
+        method 'fft' is mostly independent of the number of lag times
+        used.
 
     Returns
     -------
@@ -777,7 +873,23 @@ def _ivac_weights(trajs, lags, weights=None, method="fft"):
 
 
 def _build_weights(trajs, coeffs, old_weights):
-    """Build weights from reweighting coefficients."""
+    """Build weights from reweighting coefficients.
+
+    Parameters
+    ----------
+    trajs : list of (n_frames[i], n_features) ndarray
+        List of featurized trajectories.
+    coeffs : (n_features,) ndarray
+        Expansion coefficients of the new weights.
+    old_weights : list of (n_frames[i],) ndarray
+        Initial weight of trajectory starting at each configuration,
+        which was used to estimate the expansion coefficients.
+
+    Returns
+    -------
+    list of (n_frames[i],) ndarray
+        Weight of trajectory starting at each configuration.
+    """
     weights = []
     total = 0.0
     if is_cutlag(old_weights):
@@ -809,6 +921,8 @@ def _vac_its(evals, lag):
     ----------
     evals : (n_evecs,) array-like
         VAC eigenvalues.
+    lag : int
+        VAC lag time in units of frames.
 
     Returns
     -------
@@ -896,17 +1010,19 @@ def _sigma2eval(sigma, minlag, dlag, lagstep=1):
     ----------
     sigma : float
         Inverse implied timescale.
-
     minlag : int
         Minimum lag time in units of frames.
-
     dlag : int
         Number of frames in the interval from the minimum lag time
         to the maximum lag time (inclusive).
-
     lagstep : int, optional
         Number of frames between adjacent lag times.
         Lag times are given by minlag, minlag + lagstep, ..., maxlag.
+
+    Returns
+    -------
+    float
+        IVAC eigenvalue.
 
     """
     return (
@@ -924,20 +1040,21 @@ def _ivac_its_f(sigma, val, minlag, dlag, lagstep=1):
     ----------
     sigma : float
         Inverse implied timescale.
-
     val : float
         IVAC eigenvalue.
-
     minlag : int
         Minimum lag time in units of frames.
-
     dlag : int
         Number of frames in the interval from the minimum lag time
         to the maximum lag time (inclusive).
-
     lagstep : int, optional
         Number of frames between adjacent lag times.
         Lag times are given by minlag, minlag + lagstep, ..., maxlag.
+
+    Returns
+    -------
+    float
+        Difference between given and predicted IVAC eigenvalue.
 
     """
     a = _sigma2eval(sigma, minlag, dlag, lagstep)
@@ -946,26 +1063,29 @@ def _ivac_its_f(sigma, val, minlag, dlag, lagstep=1):
 
 @nb.njit
 def _ivac_its_f_p(sigma, val, minlag, dlag, lagstep=1):
-    """Objective function for IVAC implied timescale calculation.
+    """Objective function with derivative for IVAC ITS calculation.
 
     Parameters
     ----------
     sigma : float
         Inverse implied timescale.
-
     val : float
         IVAC eigenvalue.
-
     minlag : int
         Minimum lag time in units of frames.
-
     dlag : int
         Number of frames in the interval from the minimum lag time
         to the maximum lag time (inclusive).
-
     lagstep : int, optional
         Number of frames between adjacent lag times.
         Lag times are given by minlag, minlag + lagstep, ..., maxlag.
+
+    Returns
+    -------
+    f : float
+        Difference between given and predicted IVAC eigenvalue.
+    fprime : float
+        Derivative of f.
 
     """
     a = _sigma2eval(sigma, minlag, dlag, lagstep)
