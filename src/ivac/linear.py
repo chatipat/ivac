@@ -1003,36 +1003,6 @@ def _ivac_its(evals, minlag, maxlag, lagstep=1):
 
 
 @nb.njit
-def _sigma2eval(sigma, minlag, dlag, lagstep=1):
-    """Compute the IVAC eigenvalue for an inverse implied timescale.
-
-    Parameters
-    ----------
-    sigma : float
-        Inverse implied timescale.
-    minlag : int
-        Minimum lag time in units of frames.
-    dlag : int
-        Number of frames in the interval from the minimum lag time
-        to the maximum lag time (inclusive).
-    lagstep : int, optional
-        Number of frames between adjacent lag times.
-        Lag times are given by minlag, minlag + lagstep, ..., maxlag.
-
-    Returns
-    -------
-    float
-        IVAC eigenvalue.
-
-    """
-    return (
-        np.exp(-sigma * minlag)
-        * np.expm1(-sigma * dlag)
-        / np.expm1(-sigma * lagstep)
-    )
-
-
-@nb.njit
 def _ivac_its_f(sigma, val, minlag, dlag, lagstep=1):
     """Objective function for IVAC implied timescale calculation.
 
@@ -1057,41 +1027,8 @@ def _ivac_its_f(sigma, val, minlag, dlag, lagstep=1):
         Difference between given and predicted IVAC eigenvalue.
 
     """
-    a = _sigma2eval(sigma, minlag, dlag, lagstep)
-    return a - val
-
-
-@nb.njit
-def _ivac_its_f_p(sigma, val, minlag, dlag, lagstep=1):
-    """Objective function with derivative for IVAC ITS calculation.
-
-    Parameters
-    ----------
-    sigma : float
-        Inverse implied timescale.
-    val : float
-        IVAC eigenvalue.
-    minlag : int
-        Minimum lag time in units of frames.
-    dlag : int
-        Number of frames in the interval from the minimum lag time
-        to the maximum lag time (inclusive).
-    lagstep : int, optional
-        Number of frames between adjacent lag times.
-        Lag times are given by minlag, minlag + lagstep, ..., maxlag.
-
-    Returns
-    -------
-    f : float
-        Difference between given and predicted IVAC eigenvalue.
-    fprime : float
-        Derivative of f.
-
-    """
-    a = _sigma2eval(sigma, minlag, dlag, lagstep)
-    b = (
-        minlag
-        + lagstep / np.expm1(sigma * lagstep)
-        - dlag / np.expm1(sigma * dlag)
-    )
-    return a - val, -a * b
+    return (
+        np.exp(-sigma * minlag)
+        * np.expm1(-sigma * dlag)
+        / np.expm1(-sigma * lagstep)
+    ) - val
