@@ -40,7 +40,19 @@ def preprocess_trajs(trajs, addones=False):
 
 
 def get_nfeatures(trajs):
-    """Get the number of features in a list of trajectories."""
+    """Get the number of features in a list of trajectories.
+
+    Parameters
+    ----------
+    trajs : list of (n_frames[i], n_features) array-like
+        List of featurized trajectories.
+
+    Returns
+    -------
+    int
+        Number of features.
+
+    """
     return np.shape(trajs[0])[-1]
 
 
@@ -80,7 +92,21 @@ def find_cutlag(weight):
 
 
 def is_cutlag(weights):
-    """True if weights is given as an integer."""
+    """Return True if weights is given as an integer.
+
+    Parameters
+    ----------
+    weights : int or list of (n_frames[i],) array-like
+        Weights, as either an int (representing uniform weights, but
+        with the last int weights set to zero) or a list of weights for
+        each configuration.
+
+    Returns
+    -------
+    bool
+        True if int is given, False if a list of weights is given.
+
+    """
     weights = np.asarray(weights, dtype=object)
     return weights.ndim == 0
 
@@ -90,7 +116,28 @@ def is_cutlag(weights):
 
 
 def symeig(a, b=None, nevecs=None):
-    """Symmetrize and solve the symmetric eigenvalue problem."""
+    """Symmetrize and solve the symmetric eigenvalue problem.
+
+    Parameters
+    ----------
+    a : (n_features, n_features) ndarray
+        Real square matrix for which eigenvalues and eigenvectors will
+        be computed. This matrix will be symmetrized.
+    b : (n_features, n_features) ndarray, optional
+        Real symmetric positive definite matrix.
+        If None, use the identity matrix.
+    nevecs : int, optional
+        Number of eigenvalues and eigenvectors to return.
+        If None, return all eigenvalues and eigenvectors.
+
+    Returns
+    -------
+    evals : (n_evecs,) ndarray
+        Eigenvalues in order of decreasing magnitude.
+    evecs : (n_features, n_evecs) ndarray)
+        Eigenvectors corresponding to the eigenvalues.
+
+    """
     a = 0.5 * (a + a.T)
     evals, evecs = linalg.eigh(a, b)
     evals = evals[::-1]
@@ -99,7 +146,24 @@ def symeig(a, b=None, nevecs=None):
 
 
 def solve_stationary(a, b=None):
-    """Solve for the left eigenvector with eigenvalue 1."""
+    """Solve for the left eigenvector with eigenvalue 1.
+
+    Parameters
+    ----------
+    a : (n_features, n_features) ndarray
+        Real square matrix for which to find the left eigenvector with
+        eigenvalue 1.
+    b : (n_features, n_features) ndarray, optional
+        Real symmetric positive definite matrix.
+        If None, use the identity matrix.
+
+    Returns
+    -------
+    (n_features,) ndarray
+        Coefficients for the stationary distribution projected onto the
+        input features.
+
+    """
     if b is None:
         b = np.identity(len(a))
     w = np.squeeze(linalg.null_space((a - b).T))
@@ -112,9 +176,40 @@ def solve_stationary(a, b=None):
 
 # -----------------------------------------------------------------------------
 # calculation of single correlation matrices
+#
+# compute_ic and compute_c0 are the only routines that should be called
+# by other code. They should select the correct implementations from
+# ic_*, ct_*, and c0_* based on the arguments.
 
 
 def compute_ic(trajs, lags, *, weights=None, method="fft"):
+    """Compute the time-lagged or integrated correlation matrix.
+
+    Parameters
+    ----------
+    trajs : list of (n_frames[i], n_features) ndarray
+        List of featurized trajectories.
+    lags : int or 1d array-like
+        VAC lag time or IVAC lag times.
+    weights : int or list of (n_frames[i],) ndarray, optional
+        Weight of trajectory starting at each configuration.
+        If int, assume uniform weights except for the last int frames,
+        which have zero weight.
+    method : str, optional
+        Method to use to compute the integrated correlation matrix.
+        Currently, 'direct' and 'fft' are supported. Method 'direct'
+        performs a convolution by direct summation. It tends to be
+        faster for fewer or widely separated lag times. Method 'fft'
+        performs a convolution using a FFT. Its speed is almost
+        independent of the number or range of lag times, but has a
+        higher constant cost.
+
+    Returns
+    -------
+    (n_features, n_features) ndarray
+        Time-lagged or integrated correlation matrix.
+
+    """
     lags = np.squeeze(lags)
     assert lags.ndim in [0, 1]
     if weights is None:
@@ -130,6 +225,34 @@ def compute_ic(trajs, lags, *, weights=None, method="fft"):
 
 
 def compute_c0(trajs, *, lags=None, weights=None, method="fft"):
+    """Compute the correlation matrix.
+
+    Parameters
+    ----------
+    trajs : list of (n_frames[i], n_features) ndarray
+        List of featurized trajectories.
+    lags : int or 1d array-like, optional
+        If provided, adjust the correlation matrix so that the constant
+        eigenvector is an exact solution (up to numerical precision) of
+        linear VAC or IVAC.
+    weights : int or list of (n_frames[i],) ndarray, optional
+        Weight of trajectory starting at each configuration.
+        If int, assume uniform weights except for the last int frames,
+        which have zero weight.
+    method : str, optional
+        Method to use to compute the correlation matrix. Currently,
+        'direct' and 'fft' are supported. Method 'direct' performs a
+        convolution by direct summation. It tends to be faster for fewer
+        or widely separated lag times. Method 'fft' performs a
+        convolution using a FFT. Its speed is almost independent of the
+        number or range of lag times, but has a higher constant cost.
+
+    Returns
+    -------
+    (n_features, n_features) ndarray
+        Correlation matrix.
+
+    """
     if lags is not None:
         lags = np.squeeze(lags)
         assert lags.ndim in [0, 1]
@@ -407,9 +530,40 @@ def _adj_rt_fft(weight, lags):
 
 # -----------------------------------------------------------------------------
 # batch calculation of correlation matrices
+#
+# batch_compute_ic and batch_compute_c0 are the only routines that
+# should be called by other code. They should select the correct
+# implementations from the other batch_* and single correlation matrix
+# functions based on the arguments.
 
 
 def batch_compute_ic(trajs, params, *, weights=None, method="fft"):
+    """Compute a batch of integrated correlated matrices.
+
+    Parameters
+    ----------
+    trajs : list of (n_frames[i], n_features) ndarray
+        List of featurized trajectories.
+    params : 1d array-like or list of 1d array-like
+        If a 1d array-like, list of VAC lag times.
+        If a list of 1d array-like, list of IVAC lag times.
+    weights : int or list of (n_frames[i],) ndarray
+        Weight of trajectory starting at each configuration.
+        If int, assume uniform weights except for the last int frames,
+        which have zero weight.
+    method : str, optional
+        Method to compute integrated correlation matrices. Must be
+        'direct', 'fft', or 'fft-all'. Methods 'direct' and 'fft'
+        compute the matrices one by one using the compute_ic function.
+        Method 'fft-all' computes all of the correlation matrices at
+        once using a FFT convolution between each pair of features.
+
+    Returns
+    -------
+    iterable of (n_features, n_features) ndarray
+        Iterable of integrated correlation matrices.
+
+    """
 
     if np.asarray(params[0]).ndim == 0:
         params = np.asarray(params)
@@ -432,6 +586,7 @@ def batch_compute_ic(trajs, params, *, weights=None, method="fft"):
             else:
                 return batch_ic_rt(trajs, params, weights)
 
+    # compute each matrix one by one
     return (
         compute_ic(trajs, param, weights=weights, method=method)
         for param in params
@@ -439,6 +594,35 @@ def batch_compute_ic(trajs, params, *, weights=None, method="fft"):
 
 
 def batch_compute_c0(trajs, *, params=None, weights=None, method="fft"):
+    """Compute a batch of correlation matrices.
+
+    Parameters
+    ----------
+    trajs : list of (n_frames[i], n_features) ndarray
+        List of featurized trajectories.
+    params : 1d array-like or list of 1d array-like, optional
+        If provided, adjust the correlation matrix so that the constant
+        eigenvector is an exact solution (up to numerical precision) of
+        linear VAC or IVAC.
+    weights : int or list of (n_frames[i],) ndarray, optional
+        Weight of trajectory starting at each configuration.
+        If int, assume uniform weights except for the last int frames,
+        which have zero weight.
+    method : str, optional
+        Method to compute integrated correlation matrices. Must be
+        'direct', 'fft', or 'fft-all'. Methods 'direct' and 'fft'
+        compute the matrices one by one using the compute_ic function.
+        Method 'fft-all' computes all of the correlation matrices at
+        once using a FFT convolution between each pair of features.
+        It is not yet implemented for the equilibrium case (when weights
+        are not provided), in which case 'fft' is used instead.
+
+    Returns
+    -------
+    iterable of (n_features, n_features) ndarray
+        Iterable of correlation matrices.
+
+    """
 
     if params is None:
         if weights is None:
