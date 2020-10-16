@@ -103,6 +103,7 @@ class LinearVAC:
         self.addones = addones
         self.reweight = reweight
         self.adjust = adjust
+        self._isfit = False
 
     def fit(self, trajs, weights=None):
         """Compute VAC results from input trajectories.
@@ -166,12 +167,49 @@ class LinearVAC:
 
     def _set_fit_data(self, cov, evals, evecs, its, trajs, weights):
         """Set fields computed by the fit method."""
-        self.cov = cov
-        self.evals = evals
-        self.evecs = evecs
-        self.its = its
-        self.trajs = trajs
-        self.weights = weights
+        self._isfit = True
+        self._cov = cov
+        self._evals = evals
+        self._evecs = evecs
+        self._its = its
+        self._trajs = trajs
+        self._weights = weights
+
+    @property
+    def cov(self):
+        if self._isfit:
+            return self._cov
+        raise ValueError("object has not been fit to data")
+
+    @property
+    def evals(self):
+        if self._isfit:
+            return self._evals
+        raise ValueError("object has not been fit to data")
+
+    @property
+    def evecs(self):
+        if self._isfit:
+            return self._evecs
+        raise ValueError("object has not been fit to data")
+
+    @property
+    def its(self):
+        if self._isfit:
+            return self._its
+        raise ValueError("object has not been fit to data")
+
+    @property
+    def trajs(self):
+        if self._isfit:
+            return self._trajs
+        raise ValueError("object has not been fit to data")
+
+    @property
+    def weights(self):
+        if self._isfit:
+            return self._weights
+        raise ValueError("object has not been fit to data")
 
 
 class LinearIVAC:
@@ -292,6 +330,7 @@ class LinearIVAC:
         self.reweight = reweight
         self.adjust = adjust
         self.method = method
+        self._isfit = False
 
     def fit(self, trajs, weights=None):
         """Compute IVAC results from input trajectories.
@@ -357,12 +396,49 @@ class LinearIVAC:
 
     def _set_fit_data(self, cov, evals, evecs, its, trajs, weights):
         """Set fields computed by the fit method."""
-        self.cov = cov
-        self.evals = evals
-        self.evecs = evecs
-        self.its = its
-        self.trajs = trajs
-        self.weights = weights
+        self._isfit = True
+        self._cov = cov
+        self._evals = evals
+        self._evecs = evecs
+        self._its = its
+        self._trajs = trajs
+        self._weights = weights
+
+    @property
+    def cov(self):
+        if self._isfit:
+            return self._cov
+        raise ValueError("object has not been fit to data")
+
+    @property
+    def evals(self):
+        if self._isfit:
+            return self._evals
+        raise ValueError("object has not been fit to data")
+
+    @property
+    def evecs(self):
+        if self._isfit:
+            return self._evecs
+        raise ValueError("object has not been fit to data")
+
+    @property
+    def its(self):
+        if self._isfit:
+            return self._its
+        raise ValueError("object has not been fit to data")
+
+    @property
+    def trajs(self):
+        if self._isfit:
+            return self._trajs
+        raise ValueError("object has not been fit to data")
+
+    @property
+    def weights(self):
+        if self._isfit:
+            return self._weights
+        raise ValueError("object has not been fit to data")
 
 
 def _solve_ivac(
