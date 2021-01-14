@@ -20,3 +20,7 @@ from .nonlinear import (
     TimeLaggedPairDataset,
     VAMPScore,
 )
+
+from .utils import (
+    LazyTrajectories,
+)

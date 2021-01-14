@@ -8,6 +8,67 @@ from scipy import linalg, signal
 # trajectory functions
 
 
+class LazyTrajectories:
+    """Load trajectories lazily from disk.
+
+    Parameters
+    ----------
+    filenames : list of string
+        List of file names. Each file should contain a single trajectory
+        in the .npy format.
+
+    """
+
+    def __init__(self, filenames):
+        self.filenames = filenames
+        self._len = len(filenames)
+
+    def __getitem__(self, key):
+        return np.load(self.filenames[key])
+
+    def __iter__(self):
+        return (self[i] for i in range(len(self)))
+
+    def __len__(self):
+        return self._len
+
+
+class PreprocessedTrajectories:
+    """Prepare trajectories for further calculation.
+
+    Parameters
+    ----------
+    trajs : list of (n_frames[i], n_input_features) array-like
+        List of featurized trajectories.
+    addones : bool, optional
+        If True, add a feature of all ones to featurized trajectories.
+
+    """
+
+    def __init__(self, trajs, addones=False):
+        self.trajs = trajs
+        self.addones = addones
+        self._len = len(trajs)
+
+    def __getitem__(self, key):
+        nfeatures = get_nfeatures(self.trajs)
+        traj = np.asarray(self.trajs[key], dtype=np.float64)
+        if traj.ndim != 2:
+            raise ValueError("each trajectory must be a 2d array")
+        if traj.shape[-1] != nfeatures:
+            raise ValueError("all trajectories must have the same features")
+        if self.addones:
+            ones = np.ones((len(traj), 1))
+            traj = np.concatenate([ones, traj], axis=-1)
+        return traj
+
+    def __iter__(self):
+        return (self[i] for i in range(len(self)))
+
+    def __len__(self):
+        return self._len
+
+
 def preprocess_trajs(trajs, addones=False):
     """Prepare trajectories for further calculation.
 
@@ -24,19 +85,7 @@ def preprocess_trajs(trajs, addones=False):
         Trajectories with an additional feature of all ones.
 
     """
-    nfeatures = get_nfeatures(trajs)
-    result = []
-    for traj in trajs:
-        traj = np.asarray(traj, dtype=np.float64)
-        if traj.ndim != 2:
-            raise ValueError("each trajectory must be a 2d array")
-        if traj.shape[-1] != nfeatures:
-            raise ValueError("all trajectories must have the same features")
-        if addones:
-            ones = np.ones((len(traj), 1))
-            traj = np.concatenate([ones, traj], axis=-1)
-        result.append(traj)
-    return result
+    return PreprocessedTrajectories(trajs, addones=addones)
 
 
 def get_nfeatures(trajs):
