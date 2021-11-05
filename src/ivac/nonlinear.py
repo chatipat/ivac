@@ -1,7 +1,10 @@
 import numpy as np
-import torch
 import pytorch_lightning as pl
-from .linear import LinearVAC, LinearIVAC
+import torch
+from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks.early_stopping import EarlyStopping
+
+from .linear import LinearIVAC, LinearVAC
 
 
 class NonlinearIVAC:
@@ -151,11 +154,10 @@ class NonlinearIVAC:
             lr=self.lr,
         )
 
-        if self.patience is None:
-            early_stop_callback = False
-        else:
-            early_stop_callback = pl.callbacks.EarlyStopping(
-                patience=self.patience, mode="min"
+        callbacks = [ModelCheckpoint(monitor="val_loss")]
+        if self.patience is not None:
+            callbacks.append(
+                EarlyStopping(monitor="val_loss", patience=self.patience)
             )
 
         if self.device == "cpu":
@@ -171,7 +173,7 @@ class NonlinearIVAC:
             val_check_interval=1,
             check_val_every_n_epoch=self.val_every,
             default_root_dir=save_dir,
-            early_stop_callback=early_stop_callback,
+            callbacks=callbacks,
             gpus=gpus,
             limit_train_batches=1,
             limit_val_batches=1,
@@ -298,9 +300,8 @@ class NonlinearBasis(pl.LightningModule):
         xy = self(xy)
         x, y = xy[: len(x)], xy[len(x) :]
         loss = -self.score(x, y)
-        result = pl.TrainResult(minimize=loss)
-        result.log("train_loss", loss)
-        return result
+        self.log("train_loss", loss)
+        return loss
 
     def validation_step(self, batch, batch_idx):
         """Compute the validation loss."""
@@ -309,9 +310,8 @@ class NonlinearBasis(pl.LightningModule):
         xy = self(xy)
         x, y = xy[: len(x)], xy[len(x) :]
         loss = -self.score(x, y)
-        result = pl.EvalResult(checkpoint_on=loss, early_stop_on=loss)
-        result.log("val_loss", loss)
-        return result
+        self.log("val_loss", loss)
+        return loss
 
 
 class TimeLaggedPairDataset(torch.utils.data.IterableDataset):
