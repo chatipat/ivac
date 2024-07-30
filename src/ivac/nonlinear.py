@@ -1,8 +1,8 @@
+import lightning as L
 import numpy as np
-import pytorch_lightning as pl
 import torch
-from pytorch_lightning.callbacks import ModelCheckpoint
-from pytorch_lightning.callbacks.early_stopping import EarlyStopping
+from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 
 from .linear import LinearIVAC, LinearVAC
 
@@ -161,26 +161,30 @@ class NonlinearIVAC:
             )
 
         if self.device == "cpu":
-            gpus = 0
+            accelerator = "cpu"
+            devices = "auto"
         elif self.device == "cuda":
-            gpus = 1
+            accelerator = "gpu"
+            devices = 1
         else:
             _, gpu_id = self.device.split(":")
-            gpus = [int(gpu_id)]
+            accelerator = "gpu"
+            devices = [int(gpu_id)]
         precision = {torch.float16: 16, torch.float32: 32, torch.float64: 64}
 
-        trainer = pl.Trainer(
+        self.trainer = L.Trainer(
             val_check_interval=1,
             check_val_every_n_epoch=self.val_every,
             default_root_dir=save_dir,
             callbacks=callbacks,
-            gpus=gpus,
+            accelerator=accelerator,
+            devices=devices,
             limit_train_batches=1,
             limit_val_batches=1,
             max_epochs=self.maxiter,
             precision=precision[self.dtype],
         )
-        trainer.fit(self.basis, train_dataloader, val_dataloader)
+        self.trainer.fit(self.basis, train_dataloader, val_dataloader)
 
         self.linear.fit(self.transform_basis(train_trajs))
         self.evals = self.linear.evals
@@ -216,14 +220,16 @@ class NonlinearIVAC:
             Nonlinear combinations of input features.
 
         """
-        features = []
-        for traj in trajs:
-            traj = torch.as_tensor(traj, dtype=self.dtype, device=self.device)
-            features.append(self.basis(traj).detach().cpu().numpy())
-        return features
+        dataset = (
+            torch.as_tensor(traj, dtype=self.dtype, device=self.device)
+            for traj in trajs
+        )
+        return [
+            traj.numpy() for traj in self.trainer.predict(self.basis, dataset)
+        ]
 
 
-class NonlinearBasis(pl.LightningModule):
+class NonlinearBasis(L.LightningModule):
     """Neural network for taking nonlinear combinations of features.
 
     This is meant to be used with a PyTorch Lightning Trainer.

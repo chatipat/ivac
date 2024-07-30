@@ -18,6 +18,6 @@ setuptools.setup(
         "matplotlib",
         "numba",
         "torch",
-        "pytorch-lightning",
+        "lightning",
     ],
 )
