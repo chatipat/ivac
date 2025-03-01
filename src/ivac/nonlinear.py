@@ -38,7 +38,8 @@ class NonlinearIVAC:
         and set its standard deviation to 1.
     score : str, optional
         Score function to maximize.
-        This can currently be 'VAMP1' or 'VAMP2'.
+        Currently supports ``f'VAMP{k}'`` for positive integers ``k``.
+        'VAMP1' or 'VAMP2' are recommended.
     lr : float, optional
         Learning rate for optimization.
     patience : int, optional
@@ -250,7 +251,8 @@ class NonlinearBasis(L.LightningModule):
         and set its standard deviation to 1.
     score : str, optional
         Score function to maximize.
-        This can currently be 'VAMP1' or 'VAMP2'.
+        Currently supports ``f'VAMP{k}'`` for positive integers ``k``.
+        'VAMP1' or 'VAMP2' are recommended.
     lr : float, optional
         Learning rate for optimization.
 
@@ -282,12 +284,15 @@ class NonlinearBasis(L.LightningModule):
             layers.append(torch.nn.BatchNorm1d(nbasis, affine=False))
         self.model = torch.nn.Sequential(*layers)
 
-        if score == "VAMP1":
-            self.score = VAMPScore(score=1, addones=True)
-        elif score == "VAMP2":
-            self.score = VAMPScore(score=2, addones=True)
-        else:
-            raise ValueError("score must be 'VAMP1' or 'VAMP2'")
+        if score[:4] != 'VAMP':
+            msg = f"score ({score}) is not supported"
+            raise ValueError(msg)
+        try:
+            k = int(score[4:])
+        except ValueError:
+            msg = f"score ({score}) is not supported"
+            raise ValueError(msg)
+        self.score = VAMPScore(score=k, addones=True)
 
         self.lr = lr
 
@@ -479,7 +484,8 @@ class VAMPScore:
     Parameters
     ----------
     score : int, optional
-        VAMP score to compute. Currently, only 1 and 2 are supported.
+        VAMP score to compute. Currently, only positive integers are
+        supported.
     center : bool, optional
         If True, remove the mean from each feature before calculating
         the VAMP score, and adjust the resulting score appropriately.
@@ -543,12 +549,7 @@ class VAMPScore:
         c0 = x.t() @ x + y.t() @ y
         ct = x.t() @ y + y.t() @ x
         op = torch.linalg.solve(c0, ct)
-        if self.score == 1:
-            score = torch.trace(op)
-        elif self.score == 2:
-            score = torch.trace(op @ op)
-        else:
-            raise ValueError("score must be 1 or 2")
+        score = torch.trace(torch.linalg.matrix_power(op, self.score))
 
         if self.center and not self.addones:
             score += 1.0
