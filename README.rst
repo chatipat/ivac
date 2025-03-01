@@ -17,7 +17,7 @@ Documentation
 
 Documentation can be compiled with::
 
-    tox -e docs
+    hatch run docs:build
 
 in the root directory of the repository.
 After compiling, the documentation can be viewed by opening dist/docs/index.html.
