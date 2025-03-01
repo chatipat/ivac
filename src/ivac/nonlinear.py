@@ -542,7 +542,7 @@ class VAMPScore:
 
         c0 = x.t() @ x + y.t() @ y
         ct = x.t() @ y + y.t() @ x
-        op = torch.inverse(c0) @ ct
+        op = torch.linalg.solve(c0, ct)
         if self.score == 1:
             score = torch.trace(op)
         elif self.score == 2:
